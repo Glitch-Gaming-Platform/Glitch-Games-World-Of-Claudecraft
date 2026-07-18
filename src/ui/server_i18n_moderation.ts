@@ -3,6 +3,7 @@ type Messages = Record<string, string>;
 const en: Messages = {
   'moderation.quotedNameRequired': 'Enclose the character name in double quotes.',
   'moderation.invalidTarget': "You can't moderate that player.",
+  'moderation.noPermission': "You don't have permission to do that.",
   'moderation.kicked': 'Kicked {name}.',
   'moderation.killConfirm': 'Killed {name}.',
   'moderation.renameConfirm': 'Required {name} to rename.',
@@ -24,6 +25,7 @@ const en: Messages = {
 const es: Messages = {
   'moderation.quotedNameRequired': 'Escribe el nombre del personaje entre comillas dobles.',
   'moderation.invalidTarget': 'No puedes moderar a ese jugador.',
+  'moderation.noPermission': 'No tienes permiso para hacer eso.',
   'moderation.kicked': 'Has expulsado a {name}.',
   'moderation.killConfirm': 'Has matado a {name}.',
   'moderation.renameConfirm': 'Has obligado a {name} a renombrarse.',
@@ -45,6 +47,7 @@ const es: Messages = {
 const fr: Messages = {
   'moderation.quotedNameRequired': 'Entourez le nom du personnage de guillemets doubles.',
   'moderation.invalidTarget': 'Vous ne pouvez pas modérer ce joueur.',
+  'moderation.noPermission': "Vous n'avez pas la permission de faire cela.",
   'moderation.kicked': '{name} a été expulsé.',
   'moderation.killConfirm': '{name} a été tué.',
   'moderation.renameConfirm': '{name} doit se renommer.',
@@ -67,6 +70,7 @@ const fr: Messages = {
 const it: Messages = {
   'moderation.quotedNameRequired': 'Racchiudi il nome del personaggio tra virgolette doppie.',
   'moderation.invalidTarget': 'Non puoi moderare quel giocatore.',
+  'moderation.noPermission': 'Non hai il permesso di farlo.',
   'moderation.kicked': '{name} è stato espulso.',
   'moderation.killConfirm': '{name} è stato ucciso.',
   'moderation.renameConfirm': '{name} deve rinominarsi.',
@@ -89,6 +93,7 @@ const it: Messages = {
 const de: Messages = {
   'moderation.quotedNameRequired': 'Setzt den Charakternamen in doppelte Anführungszeichen.',
   'moderation.invalidTarget': 'Diesen Spieler könnt ihr nicht moderieren.',
+  'moderation.noPermission': 'Dazu habt ihr keine Berechtigung.',
   'moderation.kicked': '{name} wurde entfernt.',
   'moderation.killConfirm': '{name} wurde getötet.',
   'moderation.renameConfirm': '{name} muss sich umbenennen.',
@@ -108,9 +113,32 @@ const de: Messages = {
     'Der lokale Chat ist während der Beobachtung nicht verfügbar.',
 };
 
+const cs: Messages = {
+  'moderation.quotedNameRequired': 'Uzavři jméno postavy do dvojitých uvozovek.',
+  'moderation.invalidTarget': 'Tohoto hráče nemůžeš moderovat.',
+  'moderation.noPermission': 'K tomu nemáš oprávnění.',
+  'moderation.kicked': '{name} byl(a) vyhozen(a).',
+  'moderation.killConfirm': '{name} byl(a) zabit(a).',
+  'moderation.renameConfirm': '{name} musí změnit jméno.',
+  'moderation.muteConfirm': '{name} byl(a) umlčen(a) na {duration}.',
+  'moderation.banConfirm': '{name} byl(a) zabanován(a).',
+  'moderation.suspendConfirm': '{name} byl(a) pozastaven(a) na {duration}.',
+  'moderation.banned': 'Tento účet byl zabanován.',
+  'moderation.muteUsage': 'Použití: /mute "<jméno>" <minuty> [důvod]',
+  'moderation.suspendUsage': 'Použití: /suspend "<jméno>" <minuty> [důvod]',
+  'moderation.spectateUsage': 'Použití: /spectate <jméno>',
+  'moderation.spectateNotOnline': "Žádný online hráč jménem '{name}'.",
+  'moderation.notSpectating': 'Nikoho nesleduješ.',
+  'moderation.spectateStart': 'Nyní sleduješ {name}.',
+  'moderation.spectateStop': 'Sledování zastaveno.',
+  'moderation.spectateEnded': '{name} už není online; sledování skončilo.',
+  'moderation.spectateLocalChatUnavailable': 'Místní chat není při sledování dostupný.',
+};
+
 const zhCN: Messages = {
   'moderation.quotedNameRequired': '请用双引号括住角色名称。',
   'moderation.invalidTarget': '你不能管理该玩家。',
+  'moderation.noPermission': '你没有权限执行该操作。',
   'moderation.kicked': '已踢出 {name}。',
   'moderation.killConfirm': '已击杀 {name}。',
   'moderation.renameConfirm': '已要求 {name} 改名。',
@@ -132,6 +160,7 @@ const zhCN: Messages = {
 const zhTW: Messages = {
   'moderation.quotedNameRequired': '請用雙引號括住角色名稱。',
   'moderation.invalidTarget': '你不能管理該玩家。',
+  'moderation.noPermission': '你沒有權限執行該操作。',
   'moderation.kicked': '已踢出 {name}。',
   'moderation.killConfirm': '已擊殺 {name}。',
   'moderation.renameConfirm': '已要求 {name} 改名。',
@@ -153,6 +182,7 @@ const zhTW: Messages = {
 const ko: Messages = {
   'moderation.quotedNameRequired': '캐릭터 이름을 큰따옴표로 묶으십시오.',
   'moderation.invalidTarget': '해당 플레이어를 관리할 수 없습니다.',
+  'moderation.noPermission': '그렇게 할 권한이 없습니다.',
   'moderation.kicked': '{name}님을 추방했습니다.',
   'moderation.killConfirm': '{name}님을 처치했습니다.',
   'moderation.renameConfirm': '{name}님에게 이름 변경을 요구했습니다.',
@@ -174,6 +204,7 @@ const ko: Messages = {
 const ja: Messages = {
   'moderation.quotedNameRequired': 'キャラクター名を二重引用符で囲んでください。',
   'moderation.invalidTarget': 'そのプレイヤーをモデレートできません。',
+  'moderation.noPermission': 'それを行う権限がありません。',
   'moderation.kicked': '{name} をキックしました。',
   'moderation.killConfirm': '{name} を倒しました。',
   'moderation.renameConfirm': '{name} に改名を要求しました。',
@@ -195,6 +226,7 @@ const ja: Messages = {
 const pt: Messages = {
   'moderation.quotedNameRequired': 'Coloque o nome do personagem entre aspas duplas.',
   'moderation.invalidTarget': 'Você não pode moderar esse jogador.',
+  'moderation.noPermission': 'Você não tem permissão para fazer isso.',
   'moderation.kicked': '{name} foi expulso.',
   'moderation.killConfirm': '{name} foi morto.',
   'moderation.renameConfirm': '{name} deve renomear-se.',
@@ -217,6 +249,7 @@ const pt: Messages = {
 const ru: Messages = {
   'moderation.quotedNameRequired': 'Заключите имя персонажа в двойные кавычки.',
   'moderation.invalidTarget': 'Вы не можете модерировать этого игрока.',
+  'moderation.noPermission': 'У вас нет прав на это действие.',
   'moderation.kicked': '{name} исключён.',
   'moderation.killConfirm': '{name} убит.',
   'moderation.renameConfirm': '{name} должен сменить имя.',
@@ -238,6 +271,7 @@ const ru: Messages = {
 const da: Messages = {
   'moderation.quotedNameRequired': 'Sæt figurens navn i dobbelte anførselstegn.',
   'moderation.invalidTarget': 'Du kan ikke moderere denne spiller.',
+  'moderation.noPermission': 'Du har ikke tilladelse til at gøre det.',
   'moderation.kicked': '{name} blev smidt ud.',
   'moderation.killConfirm': '{name} blev dræbt.',
   'moderation.renameConfirm': '{name} skal skifte navn.',
@@ -259,6 +293,7 @@ const da: Messages = {
 const id: Messages = {
   'moderation.quotedNameRequired': 'Apit nama karakter dengan tanda kutip ganda.',
   'moderation.invalidTarget': 'Anda tidak dapat memoderasi pemain itu.',
+  'moderation.noPermission': 'Anda tidak memiliki izin untuk melakukan itu.',
   'moderation.kicked': '{name} telah dikeluarkan.',
   'moderation.killConfirm': '{name} telah dibunuh.',
   'moderation.renameConfirm': '{name} diwajibkan mengganti nama.',
@@ -280,6 +315,7 @@ const id: Messages = {
 const nl: Messages = {
   'moderation.quotedNameRequired': 'Zet de naam van het personage tussen dubbele aanhalingstekens.',
   'moderation.invalidTarget': 'Je kunt die speler niet modereren.',
+  'moderation.noPermission': 'Je hebt geen toestemming om dat te doen.',
   'moderation.kicked': '{name} is verwijderd.',
   'moderation.killConfirm': '{name} is gedood.',
   'moderation.renameConfirm': '{name} moet de naam wijzigen.',
@@ -302,6 +338,7 @@ const nl: Messages = {
 const pl: Messages = {
   'moderation.quotedNameRequired': 'Umieść nazwę postaci w podwójnym cudzysłowie.',
   'moderation.invalidTarget': 'Nie możesz moderować tego gracza.',
+  'moderation.noPermission': 'Nie masz uprawnień, aby to zrobić.',
   'moderation.kicked': 'Gracz {name} został wyrzucony.',
   'moderation.killConfirm': 'Gracz {name} został zabity.',
   'moderation.renameConfirm': 'Gracz {name} musi zmienić nazwę.',
@@ -323,6 +360,7 @@ const pl: Messages = {
 const sv: Messages = {
   'moderation.quotedNameRequired': 'Sätt karaktärens namn inom dubbla citattecken.',
   'moderation.invalidTarget': 'Du kan inte moderera den spelaren.',
+  'moderation.noPermission': 'Du har inte behörighet att göra det.',
   'moderation.kicked': '{name} har sparkats ut.',
   'moderation.killConfirm': '{name} har dödats.',
   'moderation.renameConfirm': '{name} måste byta namn.',
@@ -344,6 +382,7 @@ const sv: Messages = {
 const tr: Messages = {
   'moderation.quotedNameRequired': 'Karakter adını çift tırnak içine alın.',
   'moderation.invalidTarget': 'Bu oyuncuyu denetleyemezsiniz.',
+  'moderation.noPermission': 'Bunu yapma izniniz yok.',
   'moderation.kicked': '{name} oyundan atıldı.',
   'moderation.killConfirm': '{name} öldürüldü.',
   'moderation.renameConfirm': '{name} adını değiştirmek zorunda.',
@@ -365,6 +404,7 @@ const tr: Messages = {
 const vi: Messages = {
   'moderation.quotedNameRequired': 'Đặt tên nhân vật trong dấu ngoặc kép.',
   'moderation.invalidTarget': 'Bạn không thể kiểm duyệt người chơi đó.',
+  'moderation.noPermission': 'Bạn không có quyền làm điều đó.',
   'moderation.kicked': '{name} đã bị đuổi.',
   'moderation.killConfirm': '{name} đã bị hạ.',
   'moderation.renameConfirm': '{name} phải đổi tên.',
@@ -383,26 +423,129 @@ const vi: Messages = {
   'moderation.spectateLocalChatUnavailable': 'Chat cục bộ không khả dụng khi đang theo dõi.',
 };
 
+const jailEn: Messages = {
+  'moderation.jailUsage': 'Usage: /jail ["<name>" <minutes> [reason]]',
+  'moderation.unjailUsage': 'Usage: /unjail ["<name>"]',
+  'moderation.jailMovedFor': 'A moderator has moved you to jail for {duration}.',
+  'moderation.jailSentenceEnded': 'Your jail sentence has ended.',
+  'moderation.jailReleased': 'A moderator has released you from jail.',
+  'moderation.jailVisitStart': 'Moved to jail visitor area.',
+  'moderation.jailVisitStop': 'Returned from jail visitor area.',
+  'moderation.jailVisitNotActive': 'You are not visiting jail.',
+  'moderation.jailed': 'Jailed {name}.',
+  'moderation.jailedFor': 'Jailed {name} for {duration}.',
+  'moderation.unjailed': 'Released {name} from jail.',
+  'moderation.alreadyJailed': '{name} is already jailed.',
+  'moderation.notJailed': '{name} is not jailed.',
+  'moderation.jailBlocked': 'You cannot do that while jailed.',
+};
+
+const jailEs: Messages = {
+  'moderation.jailUsage': 'Uso: /jail ["<nombre>" <minutos> [motivo]]',
+  'moderation.unjailUsage': 'Uso: /unjail ["<nombre>"]',
+  'moderation.jailMovedFor': 'Un moderador te ha enviado a la cárcel durante {duration}.',
+  'moderation.jailSentenceEnded': 'Tu condena ha terminado.',
+  'moderation.jailReleased': 'Un moderador te ha liberado de la cárcel.',
+  'moderation.jailVisitStart': 'Trasladado a la zona de visita de la cárcel.',
+  'moderation.jailVisitStop': 'Has vuelto de la zona de visita de la cárcel.',
+  'moderation.jailVisitNotActive': 'No estás visitando la cárcel.',
+  'moderation.jailed': 'Has encarcelado a {name}.',
+  'moderation.jailedFor': 'Has encarcelado a {name} durante {duration}.',
+  'moderation.unjailed': 'Has liberado a {name} de la cárcel.',
+  'moderation.alreadyJailed': '{name} ya está encarcelado.',
+  'moderation.notJailed': '{name} no está encarcelado.',
+  'moderation.jailBlocked': 'No puedes hacer eso mientras estás encarcelado.',
+};
+
+const jailFr: Messages = {
+  'moderation.jailUsage': 'Usage : /jail ["<nom>" <minutes> [raison]]',
+  'moderation.unjailUsage': 'Usage : /unjail ["<nom>"]',
+  'moderation.jailMovedFor': 'Un modérateur vous a envoyé en prison pour {duration}.',
+  'moderation.jailSentenceEnded': 'Votre peine de prison est terminée.',
+  'moderation.jailReleased': 'Un modérateur vous a libéré de prison.',
+  'moderation.jailVisitStart': 'Téléporté dans la zone de visite de la prison.',
+  'moderation.jailVisitStop': 'Retour depuis la zone de visite de la prison.',
+  'moderation.jailVisitNotActive': 'Vous ne visitez pas la prison.',
+  'moderation.jailed': '{name} est emprisonné.',
+  'moderation.jailedFor': '{name} est emprisonné pour {duration}.',
+  'moderation.unjailed': '{name} est libéré de prison.',
+  'moderation.alreadyJailed': '{name} est déjà emprisonné.',
+  'moderation.notJailed': "{name} n'est pas emprisonné.",
+  'moderation.jailBlocked': 'Vous ne pouvez pas faire ça tant que vous êtes en prison.',
+};
+
+const jailIt: Messages = {
+  'moderation.jailUsage': 'Uso: /jail ["<nome>" <minuti> [motivo]]',
+  'moderation.unjailUsage': 'Uso: /unjail ["<nome>"]',
+  'moderation.jailMovedFor': 'Un moderatore ti ha spostato in prigione per {duration}.',
+  'moderation.jailSentenceEnded': 'La tua pena è terminata.',
+  'moderation.jailReleased': 'Un moderatore ti ha liberato dalla prigione.',
+  'moderation.jailVisitStart': 'Spostato nell area visitatori della prigione.',
+  'moderation.jailVisitStop': 'Ritornato dall area visitatori della prigione.',
+  'moderation.jailVisitNotActive': 'Non stai visitando la prigione.',
+  'moderation.jailed': '{name} è stato imprigionato.',
+  'moderation.jailedFor': '{name} è stato imprigionato per {duration}.',
+  'moderation.unjailed': '{name} è stato liberato dalla prigione.',
+  'moderation.alreadyJailed': '{name} è già in prigione.',
+  'moderation.notJailed': '{name} non è in prigione.',
+  'moderation.jailBlocked': 'Non puoi farlo mentre sei in prigione.',
+};
+
+const jailDe: Messages = {
+  'moderation.jailUsage': 'Verwendung: /jail ["<Name>" <Minuten> [Grund]]',
+  'moderation.unjailUsage': 'Verwendung: /unjail ["<Name>"]',
+  'moderation.jailMovedFor': 'Ein Moderator hat euch für {duration} ins Gefängnis versetzt.',
+  'moderation.jailSentenceEnded': 'Eure Haftstrafe ist beendet.',
+  'moderation.jailReleased': 'Ein Moderator hat euch aus dem Gefängnis entlassen.',
+  'moderation.jailVisitStart': 'In den Gefängnisbesuchsbereich versetzt.',
+  'moderation.jailVisitStop': 'Aus dem Gefängnisbesuchsbereich zurückgekehrt.',
+  'moderation.jailVisitNotActive': 'Ihr besucht das Gefängnis nicht.',
+  'moderation.jailed': '{name} wurde eingesperrt.',
+  'moderation.jailedFor': '{name} wurde für {duration} eingesperrt.',
+  'moderation.unjailed': '{name} wurde aus dem Gefängnis entlassen.',
+  'moderation.alreadyJailed': '{name} ist bereits eingesperrt.',
+  'moderation.notJailed': '{name} ist nicht eingesperrt.',
+  'moderation.jailBlocked': 'Das könnt ihr nicht tun, solange ihr eingesperrt seid.',
+};
+
+const jailGeneric: Messages = {
+  'moderation.jailUsage': 'Uso: /jail ["<nome>" <minuti> [motivo]]',
+  'moderation.unjailUsage': 'Uso: /unjail ["<nome>"]',
+  'moderation.jailMovedFor': 'Un moderatore ti ha mandato in prigione per {duration}.',
+  'moderation.jailSentenceEnded': 'La tua pena è terminata.',
+  'moderation.jailReleased': 'Un moderatore ti ha liberato dalla prigione.',
+  'moderation.jailVisitStart': 'Spostato nell area visitatori della prigione.',
+  'moderation.jailVisitStop': 'Ritornato dall area visitatori della prigione.',
+  'moderation.jailVisitNotActive': 'Non stai visitando la prigione.',
+  'moderation.jailed': '{name} è stato imprigionato.',
+  'moderation.jailedFor': '{name} è stato imprigionato per {duration}.',
+  'moderation.unjailed': '{name} è stato liberato dalla prigione.',
+  'moderation.alreadyJailed': '{name} è già in prigione.',
+  'moderation.notJailed': '{name} non è in prigione.',
+  'moderation.jailBlocked': 'Non puoi farlo mentre sei in prigione.',
+};
+
 export const IN_GAME_MODERATION_MESSAGES: Record<string, Messages> = {
-  en,
-  en_CA: en,
-  es,
-  es_ES: es,
-  fr_FR: fr,
-  fr_CA: fr,
-  it_IT: it,
-  de_DE: de,
-  zh_CN: zhCN,
-  zh_TW: zhTW,
-  ko_KR: ko,
-  ja_JP: ja,
-  pt_BR: pt,
-  ru_RU: ru,
-  da_DK: da,
-  id_ID: id,
-  nl_NL: nl,
-  pl_PL: pl,
-  sv_SE: sv,
-  tr_TR: tr,
-  vi_VN: vi,
+  en: { ...en, ...jailEn },
+  en_CA: { ...en, ...jailEn },
+  es: { ...es, ...jailEs },
+  es_ES: { ...es, ...jailEs },
+  fr_FR: { ...fr, ...jailFr },
+  fr_CA: { ...fr, ...jailFr },
+  it_IT: { ...it, ...jailIt },
+  de_DE: { ...de, ...jailDe },
+  zh_CN: { ...zhCN, ...jailGeneric },
+  zh_TW: { ...zhTW, ...jailGeneric },
+  ko_KR: { ...ko, ...jailGeneric },
+  ja_JP: { ...ja, ...jailGeneric },
+  pt_BR: { ...pt, ...jailGeneric },
+  ru_RU: { ...ru, ...jailGeneric },
+  cs_CZ: { ...cs, ...jailGeneric },
+  da_DK: { ...da, ...jailGeneric },
+  id_ID: { ...id, ...jailGeneric },
+  nl_NL: { ...nl, ...jailGeneric },
+  pl_PL: { ...pl, ...jailGeneric },
+  sv_SE: { ...sv, ...jailGeneric },
+  tr_TR: { ...tr, ...jailGeneric },
+  vi_VN: { ...vi, ...jailGeneric },
 };

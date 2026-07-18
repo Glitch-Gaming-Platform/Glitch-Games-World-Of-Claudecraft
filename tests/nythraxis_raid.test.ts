@@ -5,6 +5,8 @@ import { dungeonDaisHasRaisedPlatform } from '../src/render/dungeon';
 import { isBlocked } from '../src/sim/colliders';
 import { DUNGEONS, ITEMS, instanceOrigin, MOBS } from '../src/sim/data';
 import { NYTHRAXIS_LAYOUT } from '../src/sim/dungeon_layout';
+import { isShieldItem } from '../src/sim/equipment_rules';
+import { expectedStatBudget, itemLevel, primaryStatSum } from '../src/sim/item_level';
 import { Sim } from '../src/sim/sim';
 import { type Aura, dist2d, type Entity } from '../src/sim/types';
 import { groundHeight } from '../src/sim/world';
@@ -181,16 +183,60 @@ describe('Nythraxis raid encounter', () => {
     expect(MOBS.nythraxis_scourge_of_thornpeak.dmgPerLevel).toBeCloseTo(11.4);
     expect(MOBS.nythraxis_skeleton_warrior.dmgBase).toBeCloseTo(26);
     expect(MOBS.nythraxis_skeleton_warrior.dmgPerLevel).toBeCloseTo(5.6);
+    expect(MOBS.nythraxis_heroic_warrior_add).toMatchObject({
+      family: 'undead',
+      elite: true,
+      ccImmune: true,
+      minLevel: 20,
+      maxLevel: 20,
+      dmgBase: 26,
+      dmgPerLevel: 5.6,
+    });
+    // Malric: CC-able (must be stunned/silenced to break his heal channel), squishy,
+    // and channels an escalating heal on the boss instead of a shield.
+    expect(MOBS.nythraxis_heroic_priest_add).toMatchObject({
+      family: 'undead',
+      elite: true,
+      ccImmune: false,
+      minLevel: 20,
+      maxLevel: 20,
+      channelHeal: expect.objectContaining({
+        every: 4,
+        baseHeal: 320,
+        rampAdd: 240,
+        maxHeal: 1440,
+      }),
+    });
+    expect(MOBS.nythraxis_heroic_priest_add.wardAllies).toBeUndefined();
+    // Voss: untauntable but CC-able, medium damage, low health.
+    expect(MOBS.nythraxis_heroic_rogue_add).toMatchObject({
+      family: 'undead',
+      elite: true,
+      ccImmune: false,
+      minLevel: 20,
+      maxLevel: 20,
+      ignoreTaunt: true,
+      dmgBase: 16,
+    });
 
     const sim = makeWorld();
     const pid = sim.addPlayer('warrior', 'Tank');
     const origin = enterRaid(sim, pid);
     expect(sim.entities.get(pid)!.pos.x).toBeGreaterThan(3000);
     const boss = mob(sim, 'nythraxis_scourge_of_thornpeak');
-    expect(boss.maxHp).toBe(51239);
+    expect(boss.maxHp).toBe(60000);
     expect(boss.weapon.min).toBe(325);
     expect(boss.weapon.max).toBe(507);
     expect(visualKeyFor(boss)).toBe('skel_golem');
+    expect(
+      visualKeyFor({ kind: 'mob', templateId: 'nythraxis_heroic_warrior_add' } as Entity),
+    ).toBe('skel_warrior');
+    expect(visualKeyFor({ kind: 'mob', templateId: 'nythraxis_heroic_priest_add' } as Entity)).toBe(
+      'skel_necromancer',
+    );
+    expect(visualKeyFor({ kind: 'mob', templateId: 'nythraxis_heroic_rogue_add' } as Entity)).toBe(
+      'skel_rogue',
+    );
     expect(boss.scale).toBeGreaterThanOrEqual(3);
     expect(boss.facing).toBe(Math.PI);
     const wards = objects(sim, 'bastion_ward_stone', origin);
@@ -286,6 +332,51 @@ describe('Nythraxis raid encounter', () => {
     expect(ITEMS.stormcallers_spaulders.requiredClass).toEqual(['shaman']);
   });
 
+  it('drops the offhand-slot and two-hander epics at item level 29 (raid source)', () => {
+    const loot = MOBS.nythraxis_scourge_of_thornpeak.loot;
+    for (const id of [
+      'bonewrought_greatsword',
+      'direfang_greatblade',
+      'bonewrought_bulwark',
+      'wraithfire_orb',
+    ]) {
+      const item = ITEMS[id];
+      expect(item.quality, id).toBe('epic');
+      // Raid source: 20 (boss level) + 6 (epic) + 3 (raid bonus) = item level 29,
+      // with the realized primary stats exactly on that tier's budget (the 2H
+      // weapons carry the doubled TWOHAND_STAT_MULT mainhand budget).
+      expect(itemLevel(item), id).toBe(29);
+      expect(primaryStatSum(item), id).toBe(expectedStatBudget(item));
+      expect(
+        loot.some((entry) => entry.itemId === id),
+        id,
+      ).toBe(true);
+    }
+    // The two-handers occupy both hands; the offhand pieces fill the slot the
+    // set never covered. The bulwark uses the v0.26 shield idiom (kind 'armor'
+    // + shield marker), the orb the held_offhand kind.
+    expect(ITEMS.bonewrought_greatsword).toMatchObject({ hand: 'twohand', slot: 'mainhand' });
+    expect(ITEMS.direfang_greatblade).toMatchObject({ hand: 'twohand', slot: 'mainhand' });
+    // A bespoke hunter lock: the agi 2H must never reach the rogue group.
+    expect(ITEMS.direfang_greatblade.requiredClass).toEqual(['hunter']);
+    expect(isShieldItem(ITEMS.bonewrought_bulwark)).toBe(true);
+    expect(ITEMS.bonewrought_bulwark).toMatchObject({
+      kind: 'armor',
+      armorType: 'mail',
+      slot: 'offhand',
+      shield: true,
+      blockValue: 30,
+    });
+    expect(ITEMS.wraithfire_orb).toMatchObject({ kind: 'held_offhand', slot: 'offhand' });
+    // The ilvl-29 raid seed rating (one rating at 20): Hit for the physical
+    // pieces, crit (never Hit) for the healer-inclusive caster orb.
+    expect(ITEMS.bonewrought_greatsword.hitRating).toBe(20);
+    expect(ITEMS.direfang_greatblade.hitRating).toBe(20);
+    expect(ITEMS.bonewrought_bulwark.hitRating).toBe(20);
+    expect(ITEMS.wraithfire_orb.critRating).toBe(20);
+    expect(ITEMS.wraithfire_orb.hitRating ?? 0).toBe(0);
+  });
+
   it('keeps Nythraxis fixed at his throne facing the entrance before pull', () => {
     const sim = makeWorld();
     const pid = sim.addPlayer('warrior', 'Tank');
@@ -321,7 +412,7 @@ describe('Nythraxis raid encounter', () => {
       const relic = objects(sim, itemId, origin)[0];
       expect(relic, itemId).toBeTruthy();
       teleport(sim, pid, relic.pos.x, relic.pos.z);
-      sim.pickUpObject(relic.id, pid);
+      expect(sim.pickUpObject(relic.id, pid)).toBe(true);
       expect(mob(sim, summonId), summonId).toBeTruthy();
     }
   });
@@ -1703,7 +1794,7 @@ describe('Nythraxis raid encounter', () => {
     expect(boss.hp).toBe(transitionBossHp);
   });
 
-  it('spawns Nythraxis add waves every 45 seconds in phase one', () => {
+  it('spawns Nythraxis add waves every 30 seconds in phase one', () => {
     const sim = makeWorld();
     const tankPid = sim.addPlayer('warrior', 'Tank');
     const origin = enterRaid(sim, tankPid);
@@ -1714,14 +1805,14 @@ describe('Nythraxis raid encounter', () => {
     teleport(sim, tankPid, origin.x, origin.z + 36);
     engage(boss, tank);
 
-    tickSeconds(sim, 31);
+    tickSeconds(sim, 28);
     expect(
       [...sim.entities.values()].filter(
         (e) => e.kind === 'mob' && e.templateId === 'nythraxis_skeleton_warrior' && !e.dead,
       ),
     ).toHaveLength(0);
 
-    tickSeconds(sim, 15);
+    tickSeconds(sim, 4);
     const adds = [...sim.entities.values()].filter(
       (e) => e.kind === 'mob' && e.templateId === 'nythraxis_skeleton_warrior' && !e.dead,
     );
@@ -2308,7 +2399,7 @@ describe('Nythraxis raid encounter', () => {
     const ward = objects(sim, 'bastion_ward_stone', origin)[0];
     const pid = sim.addPlayer('priest', 'Clicker');
     teleport(sim, pid, ward.pos.x, ward.pos.z);
-    sim.pickUpObject(ward.id, pid);
+    expect(sim.pickUpObject(ward.id, pid)).toBe(true);
 
     const channel = boss.nythraxis!.wardChannels.find((c) => c.objectId === ward.id)!;
     expect(channel.playerId).toBe(pid);
@@ -2317,6 +2408,7 @@ describe('Nythraxis raid encounter', () => {
     expect(
       sim.players.get(pid)!.inventory.some((slot) => slot?.itemId === 'bastion_ward_stone'),
     ).toBe(false);
+    expect(sim.pickUpObject(ward.id, pid)).toBe(false);
   });
 
   it('never leashes/resets when kited — keeps chasing instead of evading home', () => {
@@ -2407,6 +2499,113 @@ describe('Nythraxis raid encounter', () => {
     now = reset + 1; // just past the daily reset boundary
     sim.enterDungeon('nythraxis_boss_arena', tankPid);
     expect(tank.pos.x).toBeGreaterThan(3000); // lockout lifted, re-entry allowed
+  });
+
+  it('the kill locks EVERY raid member, even one who never entered the arena', () => {
+    const now = Date.UTC(2025, 5, 29, 16, 0, 0);
+    const reset = nextRaidResetMs(now);
+    const sim = makeWorld(
+      () => now,
+      (nowMs) => nextRaidResetMs(nowMs),
+    );
+    const tankPid = sim.addPlayer('warrior', 'Tank');
+    // enterRaid moves only the tank through the door: the raid fills stay at the
+    // world spawn, outside the arena and the boss room. A member who released
+    // (or camped the door) must still be locked by the kill, or one unlocked
+    // raider re-claims the arena for the whole locked raid.
+    enterRaid(sim, tankPid);
+    const tank = sim.entities.get(tankPid)!;
+    const boss = mob(sim, 'nythraxis_scourge_of_thornpeak');
+    engage(boss, tank);
+    killMob(sim, boss, tank);
+
+    const members = sim.partyOf(tankPid)!.members;
+    expect(members.length).toBeGreaterThanOrEqual(5);
+    for (const pid of members) {
+      // The fills really are outside the arena footprint (never zoned in), so
+      // this exercises the party-membership arm, not the position arm.
+      if (pid !== tankPid) {
+        expect(sim.entities.get(pid)!.pos.x, `fill ${pid} outside`).toBeLessThan(3000);
+      }
+      expect(sim.players.get(pid)!.raidLockouts.get('nythraxis_boss_arena'), `pid ${pid}`).toBe(
+        reset,
+      );
+    }
+  });
+
+  it('a raider who left the raid while parked in a side wing is still locked by the kill', () => {
+    const now = Date.UTC(2025, 5, 29, 16, 0, 0);
+    const reset = nextRaidResetMs(now);
+    const sim = makeWorld(
+      () => now,
+      (nowMs) => nextRaidResetMs(nowMs),
+    );
+    const tankPid = sim.addPlayer('warrior', 'Tank');
+    const origin = enterRaid(sim, tankPid);
+    // Bring one raider inside and park them in the east wing: inside the arena
+    // walls (the 260yd boss room) but OUTSIDE the generic 120-wide instance
+    // footprint, then have them leave the raid. Neither the group arm nor the
+    // footprint arm of the sweep sees them, so only the room-radius union does.
+    const wingPid = sim.partyOf(tankPid)!.members.find((pid) => pid !== tankPid)!;
+    sim.enterDungeon('nythraxis_boss_arena', wingPid);
+    teleport(sim, wingPid, origin.x + 200, origin.z + 82);
+    const boss = mob(sim, 'nythraxis_scourge_of_thornpeak');
+    const wing = sim.entities.get(wingPid)!;
+    expect(Math.abs(wing.pos.x - origin.x)).toBeGreaterThan(120); // outside the footprint
+    expect(dist2d(wing.pos, boss.spawnPos)).toBeLessThanOrEqual(260); // inside the room
+    sim.partyLeave(wingPid);
+    expect(sim.partyOf(wingPid)).toBeNull();
+
+    const tank = sim.entities.get(tankPid)!;
+    engage(boss, tank);
+    killMob(sim, boss, tank);
+    expect(sim.players.get(wingPid)!.raidLockouts.get('nythraxis_boss_arena')).toBe(reset);
+  });
+
+  it('a heroic kill locks the :heroic key only; the normal raid stays open that day', () => {
+    const now = Date.UTC(2025, 5, 29, 16, 0, 0);
+    const reset = nextRaidResetMs(now);
+    const sim = makeWorld(
+      () => now,
+      (nowMs) => nextRaidResetMs(nowMs),
+    );
+    const tankPid = sim.addPlayer('warrior', 'Tank');
+    attune(sim, tankPid);
+    formRaid(sim, tankPid);
+    sim.setDungeonDifficulty('heroic', tankPid);
+    sim.enterDungeon('nythraxis_boss_arena', tankPid);
+    const tank = sim.entities.get(tankPid)!;
+    const boss = mob(sim, 'nythraxis_scourge_of_thornpeak');
+    engage(boss, tank);
+    killMob(sim, boss, tank);
+
+    const meta = sim.players.get(tankPid)!;
+    // The kill locked the difficulty-scoped key, never the plain raid key: the
+    // two difficulties never consume each other's daily lockout.
+    expect(meta.raidLockouts.get('nythraxis_boss_arena:heroic')).toBe(reset);
+    expect(meta.raidLockouts.has('nythraxis_boss_arena')).toBe(false);
+
+    // Leave and free the heroic claim so the normal re-entry can claim fresh
+    // (the live-claim-wins rule otherwise rejoins the locked heroic instance).
+    // Fast-forward the empty-instance reset by marking the claim long-empty and
+    // running one reset cycle, rather than ticking out 300 real sim-seconds
+    // (6000 ticks), which times the test out under CI load.
+    sim.leaveDungeon(tankPid);
+    const heroicInst = (sim as any).instances.find(
+      (i: any) => i.dungeonId === 'nythraxis_boss_arena' && i.partyKey !== null,
+    );
+    heroicInst.emptyFor = 100000;
+    for (let i = 0; i < 40; i++) sim.tick();
+    expect(heroicInst.partyKey).toBeNull(); // the heroic claim actually freed
+
+    // Heroic re-entry is still barred by the daily lockout...
+    sim.setDungeonDifficulty('heroic', tankPid);
+    sim.enterDungeon('nythraxis_boss_arena', tankPid);
+    expect(tank.pos.x).toBeLessThan(3000);
+    // ...but the NORMAL raid is open the same day (independent lockout key).
+    sim.setDungeonDifficulty('normal', tankPid);
+    sim.enterDungeon('nythraxis_boss_arena', tankPid);
+    expect(tank.pos.x).toBeGreaterThan(3000);
   });
 
   it('falls back to a flat 24h lockout when the host injects no reset boundary (offline/headless)', () => {

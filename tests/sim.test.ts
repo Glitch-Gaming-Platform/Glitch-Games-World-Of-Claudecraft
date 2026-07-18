@@ -6,6 +6,7 @@ import {
   GROUND_OBJECTS,
   ITEMS,
   LAKE,
+  NPCS,
 } from '../src/sim/data';
 import { ACTIONS, applyAction, encodeObs, obsSize } from '../src/sim/obs';
 import { Sim } from '../src/sim/sim';
@@ -162,35 +163,39 @@ describe('classic formulas', () => {
     expect(mobXpValue(2, 8)).toBe(0);
   });
 
-  it('spell hit falls off steeply above the caster level (anti-power-level)', () => {
-    expect(spellHitChance(5, 5)).toBeCloseTo(0.96); // equal level
-    expect(spellHitChance(3, 5)).toBeCloseTo(0.82); // +2 -> ~18% miss
-    expect(spellHitChance(3, 7)).toBeCloseTo(0.16); // +4 -> ~84% miss
+  it('spell resist rises with the level gap but is capped (~25% max)', () => {
+    expect(spellHitChance(5, 5)).toBeCloseTo(0.96); // equal level -> 4% resist
+    expect(spellHitChance(4, 5)).toBeCloseTo(0.935); // +1 -> 6.5% resist (preserved)
+    expect(spellHitChance(3, 5)).toBeCloseTo(0.82); // +2 -> ~18% resist
+    expect(spellHitChance(3, 7)).toBeCloseTo(0.75); // +4 -> capped ~25% resist
   });
 
-  it('melee/ranged miss scales steeply against higher-level targets', () => {
+  it('melee/ranged miss rises with the level gap but is capped (~26% max)', () => {
     expect(meleeMissChance(5, 5)).toBeCloseTo(0.05); // equal level -> 5% base
+    expect(meleeMissChance(4, 5)).toBeCloseTo(0.075); // +1 -> 7.5% miss (preserved)
     expect(meleeMissChance(3, 5)).toBeCloseTo(0.19); // +2 (L3 vs L5) -> ~19%
-    expect(meleeMissChance(3, 7)).toBeCloseTo(0.85); // +4 (L3 vs L7) -> 85%
-    expect(meleeMissChance(3, 9)).toBeCloseTo(0.95); // +6 -> capped at 95%
+    expect(meleeMissChance(3, 7)).toBeCloseTo(0.26); // +4 -> capped ~26%
+    expect(meleeMissChance(3, 9)).toBeCloseTo(0.26); // +6 -> still capped ~26%
     // hunter Auto Shot + wands resolve through meleeMissChance too, so this covers them
   });
 
   it('abilities unlock at the right levels with ranks', () => {
     const w1 = abilitiesKnownAt('warrior', 1).map((k) => k.def.id);
-    expect(w1).toEqual(['heroic_strike', 'battle_shout']);
+    expect(w1).toEqual(['heroic_strike', 'battle_shout', 'battle_stance']);
     const w10 = abilitiesKnownAt('warrior', 10);
     expect(w10.map((k) => k.def.id)).toContain('overpower');
     const hs10 = w10.find((k) => k.def.id === 'heroic_strike')!;
     expect(hs10.rank).toBe(2);
-    const m8 = abilitiesKnownAt('mage', 8).map((k) => k.def.id);
-    expect(m8).toContain('polymorph');
-    expect(m8).not.toContain('frost_nova'); // level 10
+    // Bewitch trains at 7 in the reworked mage kit; Icebind at 5.
+    const m7 = abilitiesKnownAt('mage', 7).map((k) => k.def.id);
+    expect(m7).toContain('polymorph');
+    expect(m7).toContain('frost_nova');
   });
 
   it('ranks and new abilities carry the kit through the 10-20 band', () => {
-    // warrior: heroic strike rank 4 at 20; execute unlocks at 14, not before
-    expect(abilitiesKnownAt('warrior', 13).map((k) => k.def.id)).not.toContain('execute');
+    // warrior: Heroic Strike reaches rank 4 at 20; Early Grave unlocks at 12
+    expect(abilitiesKnownAt('warrior', 11).map((k) => k.def.id)).not.toContain('execute');
+    expect(abilitiesKnownAt('warrior', 12).map((k) => k.def.id)).toContain('execute');
     const w20 = abilitiesKnownAt('warrior', 20);
     expect(w20.map((k) => k.def.id)).toContain('execute');
     const hs20 = w20.find((k) => k.def.id === 'heroic_strike')!;
@@ -384,7 +389,9 @@ describe('combat', () => {
     wolf.level = 20;
     sim.player.resource = 0;
     (sim as any).dealDamage(wolf, sim.player, 30, false, 'physical', null, 'hit');
-    expect(sim.player.resource).toBeCloseTo(1, 5);
+    // Redesigned Warrior incoming rage is damage / attacker level, then the
+    // default Battle Stance raises rage generation by 10%.
+    expect(sim.player.resource).toBeCloseTo((30 / 20) * 1.1, 5);
   });
 
   it('mob can kill the player; release rises as a ghost, healer resurrects', () => {
@@ -596,7 +603,7 @@ describe('combat', () => {
     expect(wolf.auras.some((a: any) => a.kind === 'polymorph')).toBe(false);
   });
 
-  it('overpower requires a dodge proc', () => {
+  it('Redhand is usable without a dodge proc', () => {
     const sim = makeSim('warrior');
     sim.setPlayerLevel(10);
     const wolf = nearestMob(sim, 'forest_wolf');
@@ -605,13 +612,7 @@ describe('combat', () => {
     facePlayerAt(sim, wolf);
     sim.player.resource = 50;
     sim.castAbility('overpower');
-    let _events = sim.tick();
-    // without a dodge proc it errors
-    expect(sim.counters.damageDealt).toBe(0);
-    // simulate a dodge proc
-    sim.player.overpowerUntil = sim.time + 5;
-    sim.castAbility('overpower');
-    _events = sim.tick();
+    sim.tick();
     expect(sim.counters.damageDealt).toBeGreaterThan(0);
   });
 });
@@ -653,6 +654,8 @@ describe('spell pushback', () => {
 
   it('a hit shaves a quarter off a channel instead of cancelling it', () => {
     const { sim, wolf } = castingMage(8);
+    // Aether Darts is Chronomancy-gated in the reworked kit; commit the spec first.
+    sim.setSpec('arcane');
     sim.castAbility('arcane_missiles');
     expect(sim.player.channeling).toBe(true);
     const remBefore = sim.player.castRemaining;
@@ -778,6 +781,58 @@ describe('rogue', () => {
     expect(vanish / base).toBeCloseTo(0.5, 1);
   });
 
+  it('Sap does not break the caster stealth (issue #1890)', () => {
+    const sim = makeSim('rogue');
+    sim.setPlayerLevel(10); // Sap learns at level 10
+    const mob = nearestMob(sim, 'forest_wolf');
+    mob.level = 1;
+    mob.inCombat = false;
+    mob.aggroTargetId = null;
+    teleportTo(sim, mob.pos.x + 2, mob.pos.z);
+    sim.player.inCombat = false;
+    sim.castAbility('stealth');
+    expect(sim.player.auras.some((a) => a.kind === 'stealth')).toBe(true);
+    sim.targetEntity(mob.id);
+    facePlayerAt(sim, mob);
+    sim.castAbility('sap');
+    sim.tick();
+    expect(mob.auras.some((a: any) => a.kind === 'incapacitate')).toBe(true);
+    expect(sim.player.auras.some((a) => a.kind === 'stealth')).toBe(true);
+  });
+
+  it('Low Blow (kidney_shot) works while invisible from Vanish (issue #1890)', () => {
+    const sim = makeSim('rogue');
+    sim.setPlayerLevel(20); // Vanish (18) and Low Blow (14) both known
+    const wolf = nearestMob(sim, 'forest_wolf');
+    wolf.level = 1;
+    teleportTo(sim, wolf.pos.x + 2, wolf.pos.z);
+    sim.targetEntity(wolf.id);
+    facePlayerAt(sim, wolf);
+    let guard = 0;
+    while (sim.player.comboPoints < 2 && guard++ < 20 * 120 && !wolf.dead) {
+      if (sim.player.resource >= 45 && sim.player.gcdRemaining <= 0)
+        sim.castAbility('sinister_strike');
+      sim.tick();
+      facePlayerAt(sim, wolf);
+    }
+    expect(sim.player.comboPoints).toBeGreaterThanOrEqual(2);
+    // The build-up loop can finish off a starter-level wolf; revive it fully so
+    // the assertion below is about Low Blow, not an incidental kill.
+    sim.stopAutoAttack();
+    wolf.dead = false;
+    wolf.hp = wolf.maxHp;
+    sim.castAbility('vanish');
+    expect(sim.player.auras.some((a) => a.kind === 'stealth')).toBe(true);
+    facePlayerAt(sim, wolf);
+    for (let i = 0; i < 30 && sim.player.gcdRemaining > 0; i++) {
+      sim.tick();
+      facePlayerAt(sim, wolf);
+    }
+    sim.castAbility('kidney_shot');
+    sim.tick();
+    expect(wolf.auras.some((a: any) => a.kind === 'stun')).toBe(true);
+  });
+
   it('rogue GCD is 1.0s', () => {
     const sim = makeSim('rogue');
     expect(sim.playerGcd).toBe(1.0);
@@ -792,9 +847,10 @@ describe('food, drink, vendor', () => {
     sim.player.hp = 20;
     sim.player.combatTimer = 99;
     sim.player.inCombat = false;
+    const breadBefore = sim.countItem('baked_bread');
     sim.useItem('baked_bread');
     expect(sim.player.sitting).toBe(true);
-    expect(sim.countItem('baked_bread')).toBe(0);
+    expect(sim.countItem('baked_bread')).toBe(breadBefore - 1);
     const hpBefore = sim.player.hp;
     for (let i = 0; i < 20 * 6; i++) sim.tick();
     expect(sim.player.hp).toBeGreaterThan(hpBefore);
@@ -923,8 +979,9 @@ describe('food, drink, vendor', () => {
     const wilkes = [...sim.entities.values()].find((e) => e.templateId === 'trader_wilkes')!;
     teleportTo(sim, wilkes.pos.x + 2, wilkes.pos.z);
     sim.copper = 200;
+    const breadBefore = sim.countItem('baked_bread');
     sim.buyItem(wilkes.id, 'baked_bread');
-    expect(sim.countItem('baked_bread')).toBe(5); // food is sold in a stack of 5
+    expect(sim.countItem('baked_bread')).toBe(breadBefore + 5); // food is sold in a stack of 5
     expect(sim.copper).toBe(75); // 200 - 125 (buyValue 25 per unit x the stack of 5)
     sim.addItem('wolf_fang', 2);
     sim.sellItem('wolf_fang');
@@ -1083,6 +1140,13 @@ describe('food, drink, vendor', () => {
     expect(sim.copper).toBe(80);
   });
 
+  it('a general vendor in each of zone 2 and 3 also sells a simple fishing pole', () => {
+    for (const templateId of ['provisioner_hale', 'quartermaster_bree']) {
+      expect(NPCS[templateId].vendorItems).toContain('simple_fishing_pole');
+    }
+    expect(NPCS.trader_wilkes.vendorItems).not.toContain('simple_fishing_pole');
+  });
+
   it('rejects fishing away from fishable water', () => {
     const sim = makeSim('warrior');
     sim.addItem('simple_fishing_pole', 1);
@@ -1231,9 +1295,10 @@ describe('food, drink, vendor', () => {
     sim.events = [];
     sim.useItem('simple_fishing_pole');
     sim.events = [];
+    const breadBefore = sim.countItem('baked_bread');
     sim.useItem('baked_bread');
     expect(sim.player.castingAbility).toBe(FISHING_CAST_ID);
-    expect(sim.countItem('baked_bread')).toBe(1);
+    expect(sim.countItem('baked_bread')).toBe(breadBefore);
     expect(sim.player.eating).toBe(null);
     expect(sim.events).toContainEqual(
       expect.objectContaining({
@@ -1298,8 +1363,10 @@ describe('food, drink, vendor', () => {
     // Eastbrook Vale water: every catch must come from the Vale table, never a
     // marsh/heights fish, and never an item outside the catch list.
     const valeIds = new Set(VALE_CATCHES);
+    const preexisting = new Set(meta.inventory.map((s) => s.itemId)); // starter rations etc.
     for (let i = 0; i < 400; i++) (sim as any).completeFishing(sim.player, meta);
     for (const slot of meta.inventory) {
+      if (preexisting.has(slot.itemId)) continue;
       expect(valeIds.has(slot.itemId)).toBe(true);
     }
     // Over 400 casts the Vale's two staple fish should both show up.
@@ -1347,10 +1414,11 @@ describe('food, drink, vendor', () => {
     teleportTo(sim, wilkes.pos.x + 40, wilkes.pos.z);
     sim.copper = 100;
     sim.events = [];
+    const breadBefore = sim.countItem('baked_bread');
 
     sim.buyItem(wilkes.id, 'baked_bread');
 
-    expect(sim.countItem('baked_bread')).toBe(0);
+    expect(sim.countItem('baked_bread')).toBe(breadBefore);
     expect(sim.events).toContainEqual({ type: 'error', text: 'Too far away.', pid: sim.player.id });
   });
 
@@ -1410,13 +1478,17 @@ describe('food, drink, vendor', () => {
 describe('leveling', () => {
   it('levels up, heals to full, and learns new abilities', () => {
     const sim = makeSim('warrior');
-    expect(sim.known.map((k) => k.def.id)).toEqual(['heroic_strike', 'battle_shout']);
+    expect(sim.known.map((k) => k.def.id)).toEqual([
+      'heroic_strike',
+      'battle_shout',
+      'battle_stance',
+    ]);
     const _events: any[] = [];
     (sim as any).grantXp(xpForLevel(1) + xpForLevel(2) + xpForLevel(3) + 10);
     expect(sim.player.level).toBe(4);
     expect(sim.player.hp).toBe(sim.player.maxHp);
     expect(sim.known.map((k) => k.def.id)).toContain('charge');
-    expect(sim.known.map((k) => k.def.id)).toContain('rend');
+    expect(sim.known.map((k) => k.def.id)).toContain('overpower');
   });
 
   it('caps at max level', () => {
@@ -1427,14 +1499,14 @@ describe('leveling', () => {
 });
 
 describe('quests', () => {
-  it('full wolf quest flow: accept, kill 8, turn in', () => {
+  it('full wolf quest flow: accept, kill 3, turn in', () => {
     const sim = makeSim('warrior');
     teleportTo(sim, 4, 4);
     sim.interact();
     expect(sim.questState('q_wolves')).toBe('active');
     const wolves = [...sim.entities.values()].filter((e) => e.templateId === 'forest_wolf');
-    expect(wolves.length).toBeGreaterThanOrEqual(8);
-    for (let k = 0; k < 8; k++) {
+    expect(wolves.length).toBeGreaterThanOrEqual(3);
+    for (let k = 0; k < 3; k++) {
       const wolf = wolves[k];
       wolf.hp = 1;
       teleportTo(sim, wolf.pos.x + 2, wolf.pos.z);
@@ -1476,7 +1548,7 @@ describe('quests', () => {
     expect(sim.events).toContainEqual({ type: 'error', text: 'Too far away.', pid: sim.player.id });
 
     sim.events = [];
-    sim.questLog.set('q_wolves', { questId: 'q_wolves', counts: [8], state: 'ready' });
+    sim.questLog.set('q_wolves', { questId: 'q_wolves', counts: [3], state: 'ready' });
     sim.turnInQuest('q_wolves');
     expect(sim.questState('q_wolves')).toBe('ready');
     expect(sim.events).toContainEqual({ type: 'error', text: 'Too far away.', pid: sim.player.id });
@@ -1538,7 +1610,7 @@ describe('quests', () => {
     teleportTo(sim, 4, 4);
     sim.interact();
     const qp = sim.questLog.get('q_wolves')!;
-    qp.counts[0] = 8;
+    qp.counts[0] = 3;
     (sim as any).ctx.checkQuestReady(qp, (sim as any).primary);
     sim.interact(); // turn in wolves
     // accept bandits specifically

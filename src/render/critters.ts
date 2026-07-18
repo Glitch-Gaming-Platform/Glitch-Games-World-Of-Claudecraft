@@ -3,12 +3,17 @@
 // these have no presence in the sim/IWorld, so they cost nothing on the wire and
 // "work online for free". A small pool follows the player like the grass ring
 // (foliage.ts): when one drifts past the cull radius it relocates ahead of the
-// camera onto valid ground. Procedural primitive geometry — no GLB assets.
+// camera onto valid ground. Each species is a small Tripo-generated GLB (see
+// public/models/creatures/CLAUDE.md); a merged-primitive body is kept as a
+// fallback for the brief window before the GLB preload resolves.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { DUNGEON_X_THRESHOLD, WORLD_MAX_X, WORLD_MAX_Z, WORLD_MIN_Z } from '../sim/data';
-import { terrainHeight, terrainSteepnessAt, waterLevel } from '../sim/world';
+import { isInSowfieldShell } from '../sim/vale_cup_layout';
+import { terrainHeight, terrainSteepnessAt, waterLevelAt } from '../sim/world';
+import { loadGltf } from './assets/loader';
+import { registerPreload } from './assets/preload';
 import { GFX } from './gfx';
 
 export interface CritterField {
@@ -105,8 +110,90 @@ const TINT: Record<Species, number> = {
   bird: 0x6b8fb5,
 };
 
+const SPECIES_ASSET_URL: Record<Species, string> = {
+  rabbit: '/models/creatures/rabbit_critter.glb',
+  squirrel: '/models/creatures/squirrel_critter.glb',
+  bird: '/models/creatures/songbird_critter.glb',
+};
+
+// Each Tripo-generated critter GLB is authored with its own nose-to-tail
+// direction, which does not reliably line up with this module's Z-forward
+// convention (the merged-primitive fallback body in buildSpeciesGeo is
+// elongated along Z, and the per-frame heading rotation below assumes that).
+// A horizontal-bounding-box heuristic (long axis = forward) is NOT a valid
+// proxy here: it measures widest silhouette, not nose-to-tail, and gets both
+// the axis and the sign wrong on two of the three species (#1862 review):
+// - songbird_critter.glb is Z-long (~0.60 x ~1.00) because of wingspan, but
+//   its beak actually points along +X, so a bbox heuristic returns "no
+//   correction needed" and the bird stays broadside to its travel direction.
+// - squirrel_critter.glb's nose is along +X (head/nose/front paw at +X,
+//   bushy tail at -X); the correction has to be a SIGNED yaw (-PI/2, so +X
+//   lands on +Z) and a bbox heuristic has no way to know the sign, only the
+//   axis, so a naive +PI/2 correction faces the model tail-first instead.
+// Since this is a small, fixed set of exactly three species, an explicit
+// per-species table (verified against the live scene: local +X rotated by
+// each entry below lands nose-first along +Z) is simpler and correct where
+// the bbox heuristic was not; rabbit_critter.glb's nose already leads +Z
+// (~0.76 x ~0.92), so it needs no correction.
+const CREATURE_FORWARD_YAW: Record<Species, number> = {
+  rabbit: 0,
+  squirrel: -Math.PI / 2,
+  bird: -Math.PI / 2,
+};
+
+/**
+ * Extra yaw (radians) to bake into a loaded creature GLB so its authored
+ * nose-to-tail direction lines up with local +Z before the per-frame heading
+ * rotation is applied. Pure and Object3D-free so it is unit-testable without
+ * a GLB fixture (#1862).
+ */
+export function creatureForwardCorrectionYaw(species: Species): number {
+  return CREATURE_FORWARD_YAW[species];
+}
+
+/**
+ * Orient a loaded creature GLB instance to this module's Z-forward
+ * convention (see creatureForwardCorrectionYaw) and re-seat its base at
+ * y=0, the same Box3 re-seat delve_props.ts/mailbox.ts use for standalone
+ * props: the GLB's own origin is not guaranteed to sit at the model's feet
+ * (#1862, "critters ... clip trough the ground").
+ */
+function seatAndOrientCreatureInstance(species: Species, inst: THREE.Object3D): void {
+  inst.rotation.y = creatureForwardCorrectionYaw(species);
+  const seated = new THREE.Box3().setFromObject(inst);
+  inst.position.y -= seated.min.y;
+}
+
+const loadedSpeciesGltf = new Map<Species, THREE.Group>();
+
+if (typeof window !== 'undefined') {
+  for (const [species, url] of Object.entries(SPECIES_ASSET_URL) as [Species, string][]) {
+    registerPreload(
+      loadGltf(url).then((gltf) => {
+        loadedSpeciesGltf.set(species, gltf.scene);
+      }),
+    );
+  }
+}
+
+/**
+ * Test-only window into the preload asset set (mirrors props.ts), plus a way
+ * to inject a fake "loaded" GLB scene so the GLB code path (normally only
+ * reachable once `window` exists and the real fetch resolves) can be
+ * exercised deterministically in plain Node (#1862 regression coverage).
+ */
+export const critterPreloadInternalsForTest = {
+  speciesAssetUrl: SPECIES_ASSET_URL,
+  setLoadedForTest: (species: Species, scene: THREE.Group): void => {
+    loadedSpeciesGltf.set(species, scene);
+  },
+  clearLoadedForTest: (): void => {
+    loadedSpeciesGltf.clear();
+  },
+};
+
 interface Critter {
-  mesh: THREE.Mesh;
+  obj: THREE.Object3D;
   species: Species;
   x: number;
   z: number;
@@ -146,15 +233,36 @@ export function buildCritters(seed: number): CritterField {
     return r < 0.45 ? 'rabbit' : r < 0.75 ? 'squirrel' : 'bird';
   };
 
+  const buildInstance = (species: Species): THREE.Object3D => {
+    const loaded = loadedSpeciesGltf.get(species);
+    if (loaded) {
+      const inst = loaded.clone(true);
+      inst.traverse((child) => {
+        if (child instanceof THREE.Mesh) child.castShadow = GFX.standardMaterials;
+      });
+      seatAndOrientCreatureInstance(species, inst);
+      // The per-frame loop below does a hard c.obj.position.set(...)/rotation.y
+      // write every tick (world placement + heading), which would otherwise
+      // clobber the seat/orient correction just applied to inst. Wrap it in an
+      // outer group, same as delve_props.ts/mailbox.ts: the group is what the
+      // loop transforms, and inst keeps its correction untouched underneath.
+      const group = new THREE.Group();
+      group.add(inst);
+      return group;
+    }
+    const mesh = new THREE.Mesh(geos[species], mats[species]);
+    mesh.castShadow = GFX.standardMaterials;
+    return mesh;
+  };
+
   const critters: Critter[] = [];
   for (let i = 0; i < count; i++) {
     const species = pickSpecies();
-    const mesh = new THREE.Mesh(geos[species], mats[species]);
-    mesh.castShadow = GFX.standardMaterials;
-    mesh.visible = false;
-    group.add(mesh);
+    const obj = buildInstance(species);
+    obj.visible = false;
+    group.add(obj);
     critters.push({
-      mesh,
+      obj,
       species,
       x: 0,
       z: 0,
@@ -171,8 +279,9 @@ export function buildCritters(seed: number): CritterField {
     if (Math.abs(x) > WORLD_MAX_X - EDGE) return false;
     if (z < WORLD_MIN_Z + EDGE || z > WORLD_MAX_Z - EDGE) return false;
     if (x > DUNGEON_X_THRESHOLD - 24) return false;
+    if (isInSowfieldShell(x, z)) return false; // no wildlife on the football pitch
     if (terrainSteepnessAt(x, z, seed) > MAX_WALK_SLOPE) return false;
-    return terrainHeight(x, z, seed) > waterLevel() + 0.8;
+    return terrainHeight(x, z, seed) > waterLevelAt(x, z) + 0.8;
   };
 
   const relocate = (c: Critter, px: number, pz: number): void => {
@@ -193,7 +302,7 @@ export function buildCritters(seed: number): CritterField {
     // no valid spot this frame — hide and retry next tick
     c.x = px;
     c.z = pz;
-    c.mesh.visible = false;
+    c.obj.visible = false;
   };
 
   return {
@@ -214,7 +323,7 @@ export function buildCritters(seed: number): CritterField {
       for (let i = 0; i < critters.length; i++) {
         const c = critters[i];
         if (i >= active) {
-          if (c.mesh.visible) c.mesh.visible = false;
+          if (c.obj.visible) c.obj.visible = false;
           continue;
         }
         const dx = c.x - px,
@@ -265,9 +374,9 @@ export function buildCritters(seed: number): CritterField {
             : c.speed > 0
               ? Math.abs(Math.sin(c.hopPhase)) * 0.16
               : 0;
-        c.mesh.position.set(c.x, groundY + c.baseY + motion, c.z);
-        c.mesh.rotation.y = -c.heading + Math.PI / 2;
-        c.mesh.visible = true;
+        c.obj.position.set(c.x, groundY + c.baseY + motion, c.z);
+        c.obj.rotation.y = -c.heading + Math.PI / 2;
+        c.obj.visible = true;
       }
     },
   };

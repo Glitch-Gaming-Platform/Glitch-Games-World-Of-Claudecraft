@@ -1,4 +1,9 @@
-import { type LetterDef, QUEST_LETTERS, WELCOME_LETTER } from '../sim/content/letters';
+import {
+  HEROIC_MARK_LETTER,
+  type LetterDef,
+  QUEST_LETTERS,
+  WELCOME_LETTER,
+} from '../sim/content/letters';
 import {
   ABILITIES,
   CLASSES,
@@ -19,6 +24,7 @@ import {
   type InterpolationValues,
   type SupportedLanguage,
   supportedLanguages,
+  t,
   tOptional,
 } from './i18n';
 
@@ -50,6 +56,7 @@ export type EntityTranslationField =
   | 'leaveText'
   | 'bonus2'
   | 'bonus3'
+  | 'bonus4'
   | 'sender'
   | 'subject'
   | 'body';
@@ -61,7 +68,7 @@ export type EntityTranslationRequest =
   | {
       kind: 'itemSet';
       id: string;
-      field: 'name' | 'bonus2' | 'bonus3';
+      field: 'name' | 'bonus2' | 'bonus3' | 'bonus4';
       values?: InterpolationValues;
     }
   | { kind: 'mob'; id: string; field: 'name'; values?: InterpolationValues }
@@ -150,10 +157,12 @@ const CLASS_DESCRIPTION_KEYS: Record<PlayerClass, string> = {
 
 const fallbackLog = new Map<string, EntityTranslationFallback>();
 
-// Ravenpost authored letters by letterId (the welcome letter + the quest
-// thank-you letters), the canonical English source the 'letter' kind reads.
+// Ravenpost authored letters by letterId (the welcome letter, the Heroic Marks
+// reward letter, and the quest thank-you letters), the canonical English source
+// the 'letter' kind reads.
 const LETTERS_BY_ID: Record<string, LetterDef> = {
   [WELCOME_LETTER.letterId]: WELCOME_LETTER,
+  [HEROIC_MARK_LETTER.letterId]: HEROIC_MARK_LETTER,
 };
 for (const letter of Object.values(QUEST_LETTERS)) LETTERS_BY_ID[letter.letterId] = letter;
 
@@ -182,7 +191,19 @@ function interpolateSource(source: string, values?: InterpolationValues): string
   const legacy = source
     .replace(/\$N/g, String(values.playerName ?? values.name ?? '$N'))
     .replace(/\$C/g, String(className))
-    .replace(/\$d/g, String(values.damage ?? values.d ?? '$d'));
+    .replace(/\$d/g, String(values.damage ?? values.d ?? '$d'))
+    // Ability-description placeholders beyond the damage number: a hybrid's
+    // over-time total ($o), the first buff's resolved value ($b), the first
+    // timed effect's resolved duration ($t); hud.ts supplies all three.
+    .replace(/\$o/g, String(values.overTime ?? '$o'))
+    .replace(/\$b/g, String(values.buff ?? '$b'))
+    .replace(/\$t/g, String(values.duration ?? '$t'))
+    .replace(/\$h/g, String(values.healing ?? '$h'))
+    .replace(/\$e/g, String(values.hostilePveDuration ?? '$e'))
+    .replace(/\$p/g, String(values.hostilePvpDuration ?? '$p'))
+    .replace(/\$g/g, String(values.groundDuration ?? '$g'))
+    .replace(/\$s/g, String(values.selfCooldownRecovery ?? '$s'))
+    .replace(/\$a/g, String(values.allyCooldownRecovery ?? '$a'));
   return legacy.replace(/\{([A-Za-z0-9_]+)\}/g, (match, name: string) => {
     const value = values[name];
     return value === undefined ? match : String(value);
@@ -210,7 +231,7 @@ function canonicalEntityText(request: EntityTranslationRequest): string {
       const set = ITEM_SETS[request.id];
       if (!set) return request.id;
       if (request.field === 'name') return set.name;
-      const pieces = request.field === 'bonus2' ? 2 : 3;
+      const pieces = request.field === 'bonus2' ? 2 : request.field === 'bonus3' ? 3 : 4;
       return set.bonuses.find((b) => b.pieces === pieces)?.text ?? request.id;
     }
     case 'mob':
@@ -341,6 +362,14 @@ export function tEntity(request: EntityTranslationRequest): string {
 }
 
 export function itemDisplayName(item: ItemDef): string {
+  // Heroic upgraded variants share the base item's name (classic behavior: a heroic
+  // drop reads the same as its normal counterpart). The heroic distinction shows as
+  // an "[HEROIC]" tag on the tooltip's quality/kind line, not in the name, so a
+  // variant never needs its own translated name key.
+  if (item.heroicOf) {
+    const base = ITEMS[item.heroicOf];
+    return base ? itemDisplayName(base) : item.heroicOf;
+  }
   return tEntity({ kind: 'item', id: item.id, field: 'name' });
 }
 
@@ -411,6 +440,9 @@ export function entityTranslationManifest(): EntityTranslationManifestEntry[] {
     );
   }
   for (const item of Object.values(ITEMS).sort(compareById)) {
+    // Heroic upgraded variants carry no name key: they share the base item's name
+    // (see itemDisplayName), so they never enter the manifest.
+    if (item.heroicOf) continue;
     entries.push(
       entry(
         'item',
@@ -425,9 +457,10 @@ export function entityTranslationManifest(): EntityTranslationManifestEntry[] {
   for (const set of Object.values(ITEM_SETS).sort(compareById)) {
     // Only tiers the set actually has: the leveling haste kits carry a single
     // 3-piece tier, so registering a bonus2 row would emit an id-fallback string.
-    const fields: ('name' | 'bonus2' | 'bonus3')[] = ['name'];
+    const fields: ('name' | 'bonus2' | 'bonus3' | 'bonus4')[] = ['name'];
     if (set.bonuses.some((b) => b.pieces === 2)) fields.push('bonus2');
     if (set.bonuses.some((b) => b.pieces === 3)) fields.push('bonus3');
+    if (set.bonuses.some((b) => b.pieces === 4)) fields.push('bonus4');
     for (const field of fields) {
       entries.push(
         entry(

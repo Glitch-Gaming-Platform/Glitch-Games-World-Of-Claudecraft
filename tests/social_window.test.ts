@@ -30,14 +30,26 @@ describe('social_window: no magic values', () => {
 });
 
 describe('social_window: WAI-ARIA tabs', () => {
-  it('renders the tab strip as a role=tablist with role=tab + aria-selected + roving tabindex', () => {
-    expect(painter).toContain('role="tablist"');
-    // Exactly four real tabs (friends / guild / ignore / raid), each a role=tab. The
-    // closing quote in /role="tab"/ does NOT match role="tablist" / role="tabpanel".
-    expect(painter.match(/role="tab"/g)?.length).toBe(4);
-    expect(painter).toContain('aria-selected="${tab ===');
-    expect(painter).toContain('tabindex="${tab ===');
-    expect(painter).toContain('aria-controls="soc-body-panel"');
+  // The tab-strip markup (role=tablist/tab, aria-selected, roving tabindex) and the
+  // roving Arrow/Home/End wiring both moved onto the shared tab_strip_view.ts /
+  // tab_strip_painter.ts building blocks (their own contracts are pinned in
+  // tab_strip_view.test.ts / tab_strip_painter.test.ts); this file now pins that
+  // social_window composes them with its five real tabs (friends / guild / ignore /
+  // block / raid: ignore and block are two distinct tiers and get a tab each) instead
+  // of hand-rolling the markup or the keyboard handler itself.
+  it('builds its tab strip from the shared tab_strip_view / tab_strip_painter modules', () => {
+    expect(painter).toContain("from './tab_strip_view'");
+    expect(painter).toContain("from './tab_strip_painter'");
+    expect(painter).toContain('tabStripHtml(');
+    expect(painter).toContain('tabStripModel(');
+    expect(painter).toContain('wireTabStrip(');
+    expect(painter).toContain("panelId: 'soc-body-panel'");
+    expect(painter).toContain("stripClass: 'soc-tabs'");
+    expect(painter).toContain("tabClass: 'soc-tab'");
+    expect(painter).toContain("selectedClass: 'on'");
+    for (const id of ['friends', 'guild', 'ignore', 'block', 'raid']) {
+      expect(painter).toContain(`{ id: '${id}',`);
+    }
   });
 
   it('makes .soc-body the labelled tabpanel (refreshList still queries it by class)', () => {
@@ -50,9 +62,9 @@ describe('social_window: WAI-ARIA tabs', () => {
     expect(painter).not.toContain('aria-pressed');
   });
 
-  it('wires the roving Arrow/Home/End handler via the shared roving_index core', () => {
-    expect(painter).toContain("from './roving_index'");
-    expect(painter).toContain('rovingTarget(');
+  it('refocuses the newly active tab only on a keyboard move, matching the shared wiring contract', () => {
+    expect(painter).toContain('(id, focusFollow) => {');
+    expect(painter).toContain('if (focusFollow) focusActiveTab(el,');
   });
 });
 
@@ -73,5 +85,34 @@ describe('social_window: delegated row listeners (no per-tick churn)', () => {
     const body = painter.slice(start, next);
     expect(body).toContain('body.innerHTML');
     expect(body).not.toContain('addEventListener');
+  });
+});
+
+describe('social_window: Book of Deeds title spans (both roster surfaces)', () => {
+  // The pure row model carries the deed ID (social_view.test.ts); these pins
+  // hold the RENDER arm: each surface localizes through deedTitleText, hides
+  // entirely on '' (untitled/stale, never an empty decorated span), and emits
+  // the muted .soc-title INSIDE the ellipsized name cell. Deleting either
+  // span emission, either hide guard, or the localization call reds here.
+  it('friends rows localize the id, gate on it, and emit .soc-title inside the name', () => {
+    expect(painter).toContain(
+      "const titleText = f.activeTitle ? deedTitleText(f.activeTitle) : '';",
+    );
+    expect(painter).toContain(
+      'const titleSpan = titleText ? `<span class="soc-title">${esc(titleText)}</span>` : \'\';',
+    );
+    expect(painter).toContain('${esc(f.name)}${titleSpan}');
+  });
+
+  it('guild rows localize the id, gate on it, and place the title AFTER the rank chip', () => {
+    expect(painter).toContain(
+      "const memberTitle = m.activeTitle ? deedTitleText(m.activeTitle) : '';",
+    );
+    expect(painter).toContain('<span class="soc-title">${esc(memberTitle)}</span>');
+    // name, then rank chip, then title: a long title trims off the tail and
+    // can never push the chip out of the ellipsized cell.
+    expect(painter).toContain(
+      '${esc(m.name)}<span class="rank">${esc(rankLabel(m.rank))}</span>${memberTitleSpan}',
+    );
   });
 });

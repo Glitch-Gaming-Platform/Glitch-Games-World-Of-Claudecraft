@@ -5,6 +5,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { MOBS } from '../src/sim/data';
+import { createDeedRuntime } from '../src/sim/deeds';
 import { createMob } from '../src/sim/entity';
 import {
   addEntityToRoster,
@@ -16,8 +17,10 @@ import {
   runDespawnDecay,
   tickGroundAoEs,
 } from '../src/sim/entity_roster';
+import { createMobScanCounters } from '../src/sim/mob/scan_counters';
 import { Rng } from '../src/sim/rng';
 import { createSimContext, type SimContextHost } from '../src/sim/sim_context';
+import { createVcState } from '../src/sim/social/vale_cup';
 import { SpatialGrid } from '../src/sim/spatial';
 import type { Entity } from '../src/sim/types';
 
@@ -89,10 +92,12 @@ function makeCtx() {
     get groundAoEs() {
       return groundAoEs;
     },
+    frozenOrbs: [],
     get dungeonDoorIds() {
       return dungeonDoorIds;
     },
     instances: [],
+    dungeonResetLocks: new Map(),
     get arenaMatches() {
       return arenaMatches;
     },
@@ -107,12 +112,23 @@ function makeCtx() {
     arenaQueue2v2: [],
     arenaQueueFiesta: [],
     arenaBusySlots: new Set(),
+    arenaQueueYumi3: [],
+    arenaQueueYumi5: [],
+    yumiBusySlots: new Set(),
+    yumiCatMatches: new Map(),
+    matchmakeYumi: vi.fn(),
+    updateYumiActive: vi.fn(),
+    yumiPlayerDown: vi.fn(),
+    yumiCatDamaged: vi.fn(),
+    cleanupYumiMatch: vi.fn(),
     nextArenaMatchId: 1,
     delveRuns: [],
     delvePetStash: new Map(),
     utcDay: '',
     pendingMobRespawns: [],
     partyInvites: new Map(),
+    readyChecks: new Map(),
+    pendingResurrections: new Map(),
     chatTokens: new Map(),
     channelSubs: new Map(),
     emit,
@@ -156,6 +172,7 @@ function makeCtx() {
     applyKnockback: vi.fn(() => 0),
     diminishedCrowdControlDuration: vi.fn(() => null),
     hostilesInRadius: vi.fn(() => []),
+    friendliesInRadius: vi.fn(() => []),
     breakStealth: vi.fn(),
     applyTaunt: vi.fn(),
     summonPet: vi.fn(),
@@ -170,19 +187,30 @@ function makeCtx() {
     partyOf: vi.fn(() => null),
     removeFromParty: vi.fn(),
     dropPartyMarkers: vi.fn(),
+    formDungeonFinderGroup: vi.fn(() => null),
     onMobKilledForQuests: vi.fn(),
+    onRecipeCraftedForQuests: vi.fn(),
+    onNodeGatheredForQuests: vi.fn(),
     onInventoryChangedForQuests: vi.fn(),
     checkQuestReady: vi.fn(),
     countItem: vi.fn(() => 0),
     countFungibleItem: vi.fn(() => 0),
+    countEnchantableItem: vi.fn(() => 0),
+    removeEnchantableItem: vi.fn(),
     completeQuestForDev: vi.fn(() => false),
     completeCurrentQuestsForDev: vi.fn(() => 0),
     lockoutNowMs: vi.fn(() => 0),
     raidResetMs: vi.fn((nowMs: number) => nowMs),
     instanceKeyFor: vi.fn(() => 'solo:0'),
     instanceOriginOf: vi.fn(() => ({ x: 0, z: 0 })),
+    instanceClaimIdAt: vi.fn(() => null),
     enterDungeon: vi.fn(),
     leaveDungeon: vi.fn(),
+    resetDungeonInstances: vi.fn(),
+    inheritDungeonResetLocks: vi.fn(),
+    dungeonDifficulty: vi.fn(() => 'normal' as const),
+    setDungeonDifficulty: vi.fn(),
+    awardHeroicMarks: vi.fn(),
     addEntity: vi.fn(),
     dropEntity: vi.fn(),
     rebucket: vi.fn(),
@@ -193,10 +221,25 @@ function makeCtx() {
     delveModuleEntry: vi.fn(() => ({ x: 0, y: 0, z: 0 })),
     failDelveRun: vi.fn(),
     duels: new Map(),
+    cardDuelQueue: [],
+    cardDuels: new Map(),
     pendingLootRolls: new Map(),
     nextLootRollId: 1,
     devCommands: false,
     marketListings: [],
+    bankerIds: [],
+    vcup: createVcState(),
+    deedDirtyPids: new Set<number>(),
+    deedDirtyKeys: new Map<number, Set<string>>(),
+    worldBossEntityIds: [],
+    deedRuntime: createDeedRuntime(),
+    fiestaBotPids: [],
+    mobScanCounters: createMobScanCounters(),
+    bumpDeedStat: vi.fn(),
+    markItemDiscovered: vi.fn(),
+    markVisited: vi.fn(),
+    markDeedsDirty: vi.fn(),
+    grantDeed: vi.fn(() => true),
     grantXp: vi.fn(),
     enterCombat: vi.fn(),
     hexOutputMult: vi.fn(() => 1),
@@ -213,23 +256,21 @@ function makeCtx() {
     frenzyPackmates: vi.fn(),
     armDeathThroes: vi.fn(),
     refreshKnownAbilities: vi.fn(),
+    revalidateOffhandForSpec: vi.fn(),
     syncPetLevel: vi.fn(),
     moveToward: vi.fn(() => false),
     mobSwing: vi.fn(),
     updateRangedPetAttack: vi.fn(),
     fleeMoveSpeed: vi.fn(() => 0),
-    usesProfiledMobCombat: vi.fn(() => false),
-    updateProfiledMobCombat: vi.fn(),
-    tryMobMeleeSwingInRange: vi.fn(() => false),
     maybeFlee: vi.fn(() => false),
     aggroMob: vi.fn(),
     isStunned: vi.fn(() => false),
     isRooted: vi.fn(() => false),
     moveSpeedMult: vi.fn(() => 1),
     swingIntervalMult: vi.fn(() => 1),
-    mobEffectiveMeleeRange: vi.fn(() => 0),
     mobCanSwim: vi.fn(() => false),
     resolveMovePoint: vi.fn(() => ({ x: 0, z: 0 })),
+    resolveMove: vi.fn(() => ({ x: 0, z: 0 })),
     updatePet: vi.fn(),
     isDelveCompanionMob: vi.fn(() => false),
     updateDelveCompanion: vi.fn(),
@@ -250,6 +291,7 @@ function makeCtx() {
     // delveDetectMult stubbed above (C1/M2/C3) - deduped here.
     partyMembersForKey: vi.fn(() => []),
     addItem: vi.fn(),
+    addItemInstance: vi.fn(),
     // removeItem stubbed above (P1b inventory-hub helper) - deduped.
     spawnBossAdds: vi.fn(),
     tradeFor: vi.fn(() => null),
@@ -271,6 +313,7 @@ function makeCtx() {
     lineOfSightBlocked: vi.fn(() => false),
     stopFollow: vi.fn(),
     partyInvite: vi.fn(),
+    readyCheckStart: vi.fn(),
     tameError: vi.fn(() => null),
     standUp: vi.fn(),
     breakGhostWolf: vi.fn(),
@@ -291,6 +334,10 @@ function makeCtx() {
     setPlayerLevel: vi.fn(),
     notice: vi.fn(),
     spawnDevBot: vi.fn(),
+    spawnDevVendor: vi.fn(),
+    startCascadePlaytest: vi.fn(),
+    startDevSandbox: vi.fn(),
+    seedDungeonFinderDev: vi.fn(() => ({ spawned: 0, note: 'ok' as const })),
     // L2 inventory/vendor (W2): the four still-on-Sim helpers the moved useItem dispatches to.
     startFishing: vi.fn(),
     unlockMechChromaFromItem: vi.fn(),
@@ -305,6 +352,14 @@ function makeCtx() {
     marketListingBelongsTo: vi.fn(() => false),
     // Ravenpost mail: the quest turn-in letter hook.
     queueQuestLetter: vi.fn(),
+    mailHeroicMarks: vi.fn(),
+    applySetProcs: vi.fn(),
+    // The Vale Cup sport-move arms.
+    vcupBallKick: vi.fn(),
+    vcupBallPass: vi.fn(),
+    vcupShoot: vi.fn(),
+    vcupSportDash: vi.fn(),
+    vcupSportShove: vi.fn(),
   };
   const ctx = createSimContext(host);
   return {

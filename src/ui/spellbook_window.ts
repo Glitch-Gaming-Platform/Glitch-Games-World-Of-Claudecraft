@@ -24,7 +24,11 @@ import type { IWorld } from '../world_api';
 import { markDialogRoot } from './dialog_root';
 import { classDisplayName, tEntity } from './entity_i18n';
 import { esc } from './esc';
-import { encodeHotbarAction, HOTBAR_ACTION_MIME } from './hotbar';
+import {
+  encodeHotbarAction,
+  HOTBAR_ACTION_MIME,
+  isAbilityActionBarEligible,
+} from './hud/action_bar/hotbar';
 import { formatNumber, t } from './i18n';
 import { iconDataUrl } from './icons';
 import { buildSpellbookView, type SpellbookRow } from './spellbook_view';
@@ -50,8 +54,17 @@ export interface SpellbookWindowDeps {
   abilityTooltip(known: ResolvedAbility): string;
   /** Ability ids currently on the action bar. */
   barAbilityIds(): string[];
+  /** The hotbar's ability id per bar slot (index 0 = barSlot 1), used to derive
+   *  each row's mobile action-ring page (Phase 4, touch-only presentation). */
+  abilityIdByBarSlot(): (string | null)[];
   /** The action bar has at least one empty slot. */
   hasFreeSlot(): boolean;
+  /** The Attack toggle currently occupies bar slot 0 (showAttackButton on). */
+  attackOnBar(): boolean;
+  /** Restore (true) or remove (false) the Attack toggle on bar slot 0; routes
+   *  through the same Interface showAttackButton setting the options window and
+   *  the slot's right-click use, so all three controls stay one state. */
+  setAttackOnBar(on: boolean): void;
   /** Place an ability on the first free slot; returns whether it changed. */
   addToBar(abilityId: string): boolean;
   /** Remove an ability from the bar; returns whether it changed. */
@@ -66,8 +79,22 @@ export interface SpellbookWindowDeps {
 
 export class SpellbookWindow {
   private openerFocus: HTMLElement | null = null;
+  // Signature of the resolved abilities the last render painted (id/rank/cost/
+  // cast/cooldown). Talent allocation while the window is open reassigns
+  // world.known with new numbers; comparing this per frame lets tickOpen rebuild
+  // the row summaries so their cost/cast/cooldown never go stale (tooltip parity).
+  private lastKnownSig = '';
 
   constructor(private readonly deps: SpellbookWindowDeps) {}
+
+  // Cheap content signature of the fields a row summary displays. Reference
+  // equality on world.known will not do: the online mirror rebuilds that array
+  // every snapshot, so only the VALUES tell us a talent actually changed a number.
+  private static knownSig(known: readonly ResolvedAbility[]): string {
+    let sig = '';
+    for (const k of known) sig += `${k.def.id}:${k.rank}:${k.cost}:${k.castTime}:${k.cooldown}|`;
+    return sig;
+  }
 
   get isOpen(): boolean {
     return this.deps.root().style.display === 'block';
@@ -99,18 +126,67 @@ export class SpellbookWindow {
     this.openerFocus = null;
   }
 
+  // Per-frame entry while the window is open. Rebuilds the whole list only when a
+  // resolved ability's numbers changed (a talent allocation reassigns world.known),
+  // so row summaries reflect current cost/cast/cooldown; otherwise it just does the
+  // cheap in-place +/- toggle refresh. Hover tooltips resolve live regardless (see
+  // appendRow), so this covers the always-visible row text, not the tooltip.
+  tickOpen(): void {
+    if (SpellbookWindow.knownSig(this.deps.world().known) !== this.lastKnownSig) {
+      this.rerenderPreservingView();
+      return;
+    }
+    this.refreshHotbarControls();
+  }
+
+  // render() rebuilds the list via innerHTML, and the window root is the scroll
+  // container, so a mid-session rebuild would jump the scroll to top and drop the
+  // keyboard user's focus. Preserve both across the talent-driven rebuild: capture
+  // scrollTop and the focused element's identity (a row or its +/- toggle, keyed by
+  // ability id; or the close/reset control), then restore after the render.
+  private rerenderPreservingView(): void {
+    const root = this.deps.root();
+    const scrollTop = root.scrollTop;
+    const active = document.activeElement as HTMLElement | null;
+    let refocus: string | null = null;
+    if (active && root.contains(active)) {
+      const id = active.dataset.abilityId;
+      if (id && active.classList.contains('spell-hotbar-toggle'))
+        refocus = `.spell-hotbar-toggle[data-ability-id="${id}"]`;
+      else if (id && active.classList.contains('spell-row'))
+        refocus = `.spell-row[data-ability-id="${id}"]`;
+      else if (active.hasAttribute('data-reset-bar')) refocus = '[data-reset-bar]';
+      else if (active.hasAttribute('data-close')) refocus = '[data-close]';
+    }
+    this.render();
+    root.scrollTop = scrollTop;
+    if (refocus) (root.querySelector(refocus) as HTMLElement | null)?.focus();
+  }
+
   render(): void {
     const el = this.deps.root();
     const world = this.deps.world();
+    this.lastKnownSig = SpellbookWindow.knownSig(world.known);
     const classId = world.cfg.playerClass;
     const cls = CLASSES[classId];
+    // The kit list is the display order, but spec signatures and other talent grants are
+    // known WITHOUT being in the base kit (e.g. mortal_strike, chain_heal, stormstrike), so
+    // append any known-but-not-in-kit ability so the spellbook shows everything the player has.
+    const kit = cls.abilities;
+    const grantedExtra = world.known
+      .map((k) => k.def.id)
+      .filter((id) => !kit.includes(id) && !!ABILITIES[id]);
     const view = buildSpellbookView({
       classId,
-      abilities: cls.abilities,
+      abilities: [...kit, ...grantedExtra],
       known: world.known,
       barAbilityIds: this.deps.barAbilityIds(),
+      abilityIdByBarSlot: this.deps.abilityIdByBarSlot(),
       hasFreeSlot: this.deps.hasFreeSlot(),
+      attackOnBar: this.deps.attackOnBar(),
       hasFormBars: this.deps.hasFormBars(),
+      spec: world.talentSpec,
+      level: world.player.level,
     });
     const className = classDisplayName(view.classId);
     markDialogRoot(el, { label: t('abilityUi.spellbook.title') });
@@ -124,6 +200,7 @@ export class SpellbookWindow {
     list.className = 'spell-list';
     list.setAttribute('role', 'list');
     el.appendChild(list);
+    this.appendAttackRow(list, view.attackOnBar);
     for (const row of view.rows) this.appendRow(list, row);
     if (view.empty) {
       const empty = document.createElement('div');
@@ -147,6 +224,25 @@ export class SpellbookWindow {
   // keybind use) without a full rebuild. Mirrors the inline refreshSpellbookHotbar
   // controls but scoped to this window's root.
   refreshHotbarControls(): void {
+    // The Attack toggle tracks the Interface showAttackButton setting, which can
+    // flip while the window is open (the options window, or a right-click on the
+    // slot-0 button itself). Same elision discipline as the ability toggles:
+    // rewrite only when the on-bar state actually flips.
+    const attackBtn = this.deps.root().querySelector<HTMLButtonElement>('[data-attack-toggle]');
+    if (attackBtn) {
+      const onBar = this.deps.attackOnBar();
+      if ((attackBtn.getAttribute('aria-pressed') === 'true') !== onBar) {
+        attackBtn.textContent = onBar ? '-' : '+';
+        attackBtn.classList.toggle('remove', onBar);
+        attackBtn.setAttribute('aria-pressed', onBar ? 'true' : 'false');
+        attackBtn.setAttribute(
+          'aria-label',
+          t(onBar ? 'hudChrome.spellbook.removeFromBarAria' : 'hudChrome.spellbook.addToBarAria', {
+            name: t('abilityUi.actionBar.attackName'),
+          }),
+        );
+      }
+    }
     const barIds = new Set(this.deps.barAbilityIds());
     const hasFree = this.deps.hasFreeSlot();
     this.deps
@@ -188,6 +284,54 @@ export class SpellbookWindow {
       });
   }
 
+  // The pinned basic Attack row, first in the list (classic spellbooks lead with
+  // Attack). Attack is not an ability: its +/- toggle restores or removes the
+  // fixed Attack button on bar slot 0 through the same Interface
+  // showAttackButton setting the options window drives, so a player who
+  // right-clicked the button away can always get it back from here. Reuses the
+  // existing attackName/attackTooltip keys and the add/remove aria pair; no new
+  // player strings.
+  private appendAttackRow(list: HTMLElement, onBar: boolean): void {
+    const name = t('abilityUi.actionBar.attackName');
+    const summary = t('abilityUi.actionBar.attackTooltip');
+    const el = document.createElement('div');
+    el.className = 'spell-row';
+    el.tabIndex = 0;
+    el.setAttribute('role', 'listitem');
+    // No aria-label override: the row's own localized text (name + summary) is
+    // the accessible content, unlike ability rows whose label folds in rank.
+    el.innerHTML = `<div class="spell-icon" style="background-image:url(${iconDataUrl('ability', 'attack')})"></div>
+        <div class="spell-text"><div class="spell-name">${esc(name)}</div>
+        <div class="spell-sub">${esc(summary)}</div></div>`;
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = `spell-hotbar-toggle${onBar ? ' remove' : ''}`;
+    toggle.dataset.attackToggle = '1';
+    toggle.textContent = onBar ? '-' : '+';
+    toggle.setAttribute(
+      'aria-label',
+      t(onBar ? 'hudChrome.spellbook.removeFromBarAria' : 'hudChrome.spellbook.addToBarAria', {
+        name,
+      }),
+    );
+    toggle.setAttribute('aria-pressed', onBar ? 'true' : 'false');
+    toggle.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+    toggle.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.deps.setAttackOnBar(!this.deps.attackOnBar());
+      audio.click();
+      this.refreshHotbarControls();
+    });
+    el.appendChild(toggle);
+    this.deps.attachTooltip(
+      el,
+      () =>
+        `<div class="tt-title">${esc(t('abilityUi.actionBar.attackName'))}</div><div class="tt-sub">${esc(t('abilityUi.actionBar.attackTooltip'))}</div>`,
+    );
+    list.appendChild(el);
+  }
+
   private appendRow(list: HTMLElement, row: SpellbookRow): void {
     const def = ABILITIES[row.abilityId];
     const known = row.known;
@@ -195,6 +339,9 @@ export class SpellbookWindow {
     el.className = `spell-row${known ? '' : ' locked'}`;
     el.tabIndex = 0;
     el.setAttribute('role', 'listitem');
+    // Ability id on the row so a talent-driven rerenderPreservingView() can restore
+    // scroll focus to the same row after it rebuilds the list.
+    el.dataset.abilityId = row.abilityId;
     const locked = !known;
     const summary = known ? this.deps.abilitySummary(known) : '';
     const name = this.abilityName(def);
@@ -212,7 +359,7 @@ export class SpellbookWindow {
     el.innerHTML = `<div class="spell-icon" style="background-image:url(${iconDataUrl('ability', row.abilityId)})"></div>
         <div class="spell-text"><div class="spell-name">${esc(name)}${known && known.rank > 1 ? ` <span class="spell-rank">${esc(t('abilityUi.tooltip.rank', { rank: this.formatAbilityNumber(known.rank) }))}</span>` : ''}</div>
         <div class="spell-sub">${locked ? esc(t('abilityUi.spellbook.trainableAtLevel', { level: learnLevel })) : esc(summary)}</div></div>`;
-    if (known) {
+    if (known && isAbilityActionBarEligible(def)) {
       const toggle = document.createElement('button');
       toggle.type = 'button';
       toggle.className = `spell-hotbar-toggle${row.onBar ? ' remove' : ''}`;
@@ -229,6 +376,19 @@ export class SpellbookWindow {
       );
       toggle.setAttribute('aria-pressed', row.onBar ? 'true' : 'false');
       toggle.disabled = row.toggleDisabled;
+      // Touch-only page label (Phase 4): names which mobile action-ring page
+      // (Phase 1) this bar-assigned row's slot falls on, so a touch player who
+      // added it from the spellbook knows where to find it on the ring. Desktop
+      // rendering is untouched (row.mobilePage is still computed either way, but
+      // the label never appends without the touch gate).
+      if (row.mobilePage !== null && document.body.classList.contains('mobile-touch')) {
+        const pageLabel = document.createElement('span');
+        pageLabel.className = 'spell-mobile-page';
+        pageLabel.textContent = t('hudChrome.mobile.spellbookPageLabel', {
+          page: this.formatAbilityNumber(row.mobilePage + 1),
+        });
+        el.appendChild(pageLabel);
+      }
       toggle.addEventListener('pointerdown', (ev) => ev.stopPropagation());
       toggle.addEventListener('click', (ev) => {
         ev.preventDefault();
@@ -254,7 +414,14 @@ export class SpellbookWindow {
         this.deps.setDragAction(null);
         this.deps.clearActionDropTargets();
       });
-      this.deps.attachTooltip(el, () => this.deps.abilityTooltip(known));
+    }
+    if (known) {
+      // Resolve every learned ability LIVE at hover time, including informational
+      // passive rows that deliberately have no action-bar controls.
+      this.deps.attachTooltip(el, () => {
+        const live = this.deps.world().known.find((k) => k.def.id === known.def.id) ?? known;
+        return this.deps.abilityTooltip(live);
+      });
     } else {
       this.deps.attachTooltip(
         el,

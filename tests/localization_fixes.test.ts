@@ -6,6 +6,7 @@ import { DICT as adminDICT, classLabel, setAdminLanguage } from '../src/admin/i1
 import { DELVE_MOBS } from '../src/sim/content/delves/mobs';
 import { ABILITIES } from '../src/sim/data';
 import {
+  cs_CZ,
   da_DK,
   de_DE,
   en,
@@ -63,6 +64,7 @@ const locales: Record<string, any> = {
   ja_JP,
   pt_BR,
   ru_RU,
+  cs_CZ,
   nl_NL,
   pl_PL,
   id_ID,
@@ -806,6 +808,8 @@ function scanEmitCandidates(simSrc: string, serverSrc: string): Cand[] {
   }
   const s2 = new RegExp(`sendChatNotice\\([^,]+,\\s*${lit}`, 'g');
   for (const m of serverSrc.matchAll(s2)) cands.push({ type: 'error', tmpl: unq(m[1]) });
+  const s3 = new RegExp(`sendSystemNotice\\([^,]+,\\s*${lit}`, 'g');
+  for (const m of serverSrc.matchAll(s3)) cands.push({ type: 'log', tmpl: unq(m[1]) });
   const seen = new Set<string>();
   return cands.filter((c) => {
     const k = `${c.type} ${c.tmpl}`;
@@ -871,6 +875,7 @@ describe('S3: every sim.ts emit is recognized (drift guard)', () => {
     fs.readFileSync(path.resolve(process.cwd(), 'src/sim/mob/lifecycle.ts'), 'utf8'),
     fs.readFileSync(path.resolve(process.cwd(), 'src/sim/pet/pet_commands.ts'), 'utf8'),
     fs.readFileSync(path.resolve(process.cwd(), 'src/sim/instances/dungeons.ts'), 'utf8'),
+    fs.readFileSync(path.resolve(process.cwd(), 'src/sim/instances/heroic_vendor.ts'), 'utf8'),
     fs.readFileSync(path.resolve(process.cwd(), 'src/sim/delves/runs.ts'), 'utf8'),
     fs.readFileSync(path.resolve(process.cwd(), 'src/sim/delves/lockpick_controller.ts'), 'utf8'),
     // DL1: Drowned Litany boss/rite/rooms emit surfaces.
@@ -878,6 +883,8 @@ describe('S3: every sim.ts emit is recognized (drift guard)', () => {
     fs.readFileSync(path.resolve(process.cwd(), 'src/sim/delves/drowned_litany_rite.ts'), 'utf8'),
     fs.readFileSync(path.resolve(process.cwd(), 'src/sim/delves/drowned_litany_rooms.ts'), 'utf8'),
     fs.readFileSync(path.resolve(process.cwd(), 'src/sim/market.ts'), 'utf8'),
+    // Card Duel minigame (Card Master NPC): the queue/match log + error emits.
+    fs.readFileSync(path.resolve(process.cwd(), 'src/sim/social/card_duel.ts'), 'utf8'),
     // W2: the inventory/vendor command bodies (equip/use/discard + buy/sell/buyback).
     // The "Discarded"/"Equipped"/"Unequipped"/"You sit down to eat|drink"/"You quaff"/
     // "Sold ... for"/"Bought back ... for" emit literals are byte-identical after the
@@ -894,6 +901,26 @@ describe('S3: every sim.ts emit is recognized (drift guard)', () => {
     // the "<name> awakens!" summon log; the boss yells are variable-routed chat, not
     // scanned). Literals are byte-identical after the move so their matchers are unchanged.
     fs.readFileSync(path.resolve(process.cwd(), 'src/sim/encounters/nythraxis.ts'), 'utf8'),
+    // H1 (#1141): the interaction command bodies (corpse harvest + loot/pickup). The two
+    // corpse-harvest deny strings ("That corpse has nothing to harvest." / "This corpse
+    // has already been harvested.") have their ONLY emitter occurrences here; the file's
+    // OTHER emits (too-far, bags-full, dead, no-permission) are byte-identical to
+    // literals in already-scanned files, so only a rewording of THIS file's sites was
+    // invisible to the guard before this entry.
+    fs.readFileSync(path.resolve(process.cwd(), 'src/sim/interaction.ts'), 'utf8'),
+    // #1121: per-player node harvest command denials (dead gate, unknown node,
+    // range, respawn timer, bag-full pre-check).
+    fs.readFileSync(path.resolve(process.cwd(), 'src/sim/professions/gathering.ts'), 'utf8'),
+    // #2033 (PR 2039): the quest command bodies (accept/share/abandon/turn-in guards +
+    // the accepted/abandoned/completed logs). The two profession-choice denials
+    // ("That profession choice is not available." / "... no longer available.") have
+    // their ONLY emitter occurrences here; the file's other emits are byte-identical
+    // to literals the hud quest matchers already recognize, so a rewording of THIS
+    // file's sites was invisible to the guard before this entry.
+    fs.readFileSync(path.resolve(process.cwd(), 'src/sim/quests/quest_commands.ts'), 'utf8'),
+    // Bank system: the pooled bank deposit/withdraw/buy-slots command bodies
+    // emit the quest-item/full/afford/max-slots refusals + the purchase notice.
+    fs.readFileSync(path.resolve(process.cwd(), 'src/sim/bank.ts'), 'utf8'),
     socialSrc,
   ].join('\n');
   // Hardened S3: also scan the authoritative server's player-facing emits. The
@@ -1047,11 +1074,11 @@ describe('S3: every sim.ts emit is recognized (drift guard)', () => {
     expect(leaks, 'unregistered sim emit strings (add a key/RULE to sim_i18n.ts)').toEqual([]);
   });
 
-  // RELEASE TIER: the same coverage across all 14 locales, and where a real matcher
+  // RELEASE TIER: the same coverage across all 21 locales, and where a real matcher
   // resolves the string, its localized form is not raw English in any translated
   // locale (no silently-shipped English).
   it.runIf(RELEASE_TIER)(
-    's3_localized: every emit is recognized in all 14 locales and not left English where a matcher resolves it',
+    's3_localized: every emit is recognized in all 21 locales and not left English where a matcher resolves it',
     () => {
       const cands = candidateStrings();
       expect(cands.length, 'sanity: should enumerate many emit sites').toBeGreaterThan(80);
@@ -1077,7 +1104,7 @@ describe('S3: every sim.ts emit is recognized (drift guard)', () => {
 
 // Regression for the S3 hardening: prove the scanner ENUMERATES each emit form it was
 // hardened to cover, by feeding it synthetic source. If a future refactor drops one of
-// the regexes (s1/s1t/s2/nr/ert/e3), the matching assertion bites - so the drift guard
+// the regexes (s1/s1t/s2/s3/nr/ert/e3), the matching assertion bites - so the drift guard
 // cannot silently lose coverage of a whole emit shape.
 describe('S3 scanner enumerates each hardened emit form (regression)', () => {
   const synthSim = [
@@ -1099,6 +1126,7 @@ describe('S3 scanner enumerates each hardened emit form (regression)', () => {
     "this.send({ type: 'error', text: 'SYNTH_SERVER_INLINE' });", // s1
     "this.send({ type: 'log', text: flag ? 'SYNTH_SRV_TERN_A' : 'SYNTH_SRV_TERN_B' });", // s1t
     "sendChatNotice(session, 'SYNTH_CHATNOTICE');", // s2
+    "sendSystemNotice(session, 'SYNTH_SYSNOTICE');", // s3
   ].join('\n');
 
   // [label, expected type, expected tmpl] - every entry must be enumerated.
@@ -1119,6 +1147,7 @@ describe('S3 scanner enumerates each hardened emit form (regression)', () => {
     ['server ternary text, branch A (s1t)', 'log', 'SYNTH_SRV_TERN_A'],
     ['server ternary text, branch B (s1t)', 'log', 'SYNTH_SRV_TERN_B'],
     ['server sendChatNotice (s2)', 'error', 'SYNTH_CHATNOTICE'],
+    ['server sendSystemNotice (s3)', 'log', 'SYNTH_SYSNOTICE'],
   ];
 
   it('every hardened emit form is enumerated by scanEmitCandidates()', () => {

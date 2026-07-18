@@ -23,7 +23,9 @@
 // `src/sim`-pure: no DOM/Three/render-ui-game-net imports, no Math.random/Date.now
 // (enforced by tests/architecture.test.ts).
 
+import { bagCapacity, fitsAll } from './bags';
 import { ITEMS, MOBS, QUESTS, SPIRIT_HEALER_NPC_ID } from './data';
+import * as deedsMod from './deeds';
 import {
   activateNythraxisRelic,
   interactObjectForQuests,
@@ -37,8 +39,20 @@ import {
   lootSlotVisibleTo,
   pruneCorpseLoot,
 } from './loot/loot_roll';
+import { applyFocusBonus, applyFocusTierBonus, type FocusAllocation } from './professions/focus';
+import {
+  effectiveFocusComponents,
+  HARVEST_COMPONENT_ITEMS,
+  type HarvestTier,
+  harvestTierQuantity,
+  isHarvestableCorpse,
+  isSignableMaterialRarity,
+  resolveCorpseFocusHarvest,
+  resolveCorpseHarvest,
+  rollCorpseMaterialRarity,
+} from './professions/gathering';
 import type { SimContext } from './sim_context';
-import { dist2d, type Entity, INTERACT_RANGE, OBJECT_RESPAWN } from './types';
+import { dist2d, type Entity, INTERACT_RANGE, type InvSlot, OBJECT_RESPAWN } from './types';
 import { markWorldBossLooted } from './world_boss';
 
 // Shared corpse loot-rights snapshot for both the manual `lootCorpse` and the passive
@@ -75,31 +89,35 @@ export function lootCorpse(
   pid?: number,
   honorFfa = true,
   quiet = false,
-): void {
+): boolean {
   const r = ctx.resolve(pid);
-  if (!r) return;
+  if (!r) return false;
   const { meta, e: p } = r;
   // Dead players (released ghosts included) cannot loot; the same rejection the
   // item family uses (src/sim/items.ts). The walk-by autoLootForParty path never
   // reaches this: it silently drops a dead trigger before delegating here.
   if (p.dead) {
     ctx.error(meta.entityId, "You can't do that while dead.");
-    return;
+    return false;
   }
   const mob = ctx.entities.get(mobId);
-  if (!mob?.lootable || !mob.loot) return;
+  if (!mob?.lootable || !mob.loot) return false;
   // owner-lock lapses LOOT_FFA_DELAY after the corpse became lootable: then anyone may loot.
   const ffaUnlocked = honorFfa && lootHasGoneFfa(mob.lootFfaTimer);
   const rights = corpseLootRights(ctx, mob, meta.entityId, ffaUnlocked);
   if (!rights.shared && !rights.personal && !rights.open) {
     ctx.error(meta.entityId, "You don't have permission to loot that.");
-    return;
+    return false;
   }
   if (dist2d(p.pos, mob.pos) > INTERACT_RANGE) {
     ctx.error(meta.entityId, 'Too far away.');
-    return;
+    return false;
   }
-  if (rights.shared) distributeLootCopper(ctx, mob, meta);
+  let didLoot = false;
+  if (rights.shared && mob.loot.copper > 0) {
+    distributeLootCopper(ctx, mob, meta);
+    didLoot = true;
+  }
   // Capacity gate: an item that doesn't fit the looter's bags STAYS on the
   // corpse (classic behavior), with one "bags are full" toast per loot action.
   let bagsFull = false;
@@ -110,6 +128,7 @@ export function lootCorpse(
       while (s.count > 0 && ctx.canAddItem(s.itemId, 1, meta.entityId)) {
         ctx.addItem(s.itemId, 1, meta.entityId);
         s.count--;
+        didLoot = true;
       }
       if (s.count > 0) bagsFull = true;
       continue;
@@ -122,24 +141,30 @@ export function lootCorpse(
       ctx.addItem(s.itemId, 1, meta.entityId);
       s.personalFor = s.personalFor.filter((id) => id !== meta.entityId);
       tookPersonal = true;
+      didLoot = true;
       continue;
     }
     if (!rights.shared) continue;
     while (s.count > 0 && awardSharedLootItem(ctx, s.itemId, mob, meta)) {
       s.count--;
+      didLoot = true;
     }
     if (s.count > 0) bagsFull = true;
   }
   if (bagsFull && !quiet) ctx.error(meta.entityId, 'Your bags are full.');
-  // World-boss daily lockout is consumed by LOOTING, not by the kill: taking any
-  // personal slot from the boss's corpse burns today's roll (rollWorldBossLoot
-  // checks eligibility when the next boss dies). A contributor who never reaches
-  // the corpse keeps their daily and can try again at the next spawn.
+  // The world-boss loot lockout is consumed by LOOTING, not by the kill: taking any
+  // personal slot from the boss's corpse starts the lockout (rollWorldBossLoot checks
+  // eligibility when the next boss dies). A contributor who never reaches the corpse
+  // holds no lockout and can loot again at the next spawn.
   if (tookPersonal && MOBS[mob.templateId]?.worldBoss) {
-    markWorldBossLooted(meta, mob.templateId, ctx.utcDay);
+    // The world-boss loot lockout IS a raid lockout: this one write both gates re-loot
+    // (isWorldBossLootEligible) and renders the countdown in the raid-lockout timer, and
+    // it resets on the same boundary as the dungeon raids (ctx.raidResetMs).
+    markWorldBossLooted(meta, mob.templateId, ctx.raidResetMs(ctx.lockoutNowMs()));
   }
   pruneCorpseLoot(ctx, mob);
   if (p.targetId === mobId) p.targetId = null;
+  return didLoot;
 }
 
 // Walk-by autoloot: a silent eligibility pre-check, then a delegate to the existing
@@ -175,30 +200,156 @@ export function autoLootForParty(ctx: SimContext, mobId: number, triggerPid: num
   lootCorpse(ctx, mobId, meta.entityId, false, true);
 }
 
-export function pickUpObject(ctx: SimContext, objId: number, pid?: number): void {
+/**
+ * Profession harvest: single-use, first-come salvage of a dead mob's corpse
+ * (skinning/salvage components), independent of the loot table above. Whoever's
+ * command reaches here first while the corpse is unclaimed wins; every later
+ * attempt against the same corpse (same tick or later) is denied. See
+ * professions/gathering.ts for the race-freedom argument.
+ *
+ * `components` (#1142) is the player's per-corpse focus pick: which tagged
+ * component(s) to extract. Omitted, empty, or covering every tagged component
+ * all spread the harvest across every tag (the #1141 behavior); picking fewer
+ * concentrates the effort for a higher tier per component, per
+ * resolveCorpseFocusHarvest in professions/gathering.ts.
+ */
+export function harvestCorpse(
+  ctx: SimContext,
+  mobId: number,
+  components?: string[],
+  pid?: number,
+): void {
   const r = ctx.resolve(pid);
   if (!r) return;
   const { meta, e: p } = r;
-  // Dead players (released ghosts included) cannot pick up world objects.
+  // Dead players (released ghosts included) cannot harvest; the same rejection
+  // the loot/pickup commands above use.
   if (p.dead) {
     ctx.error(meta.entityId, "You can't do that while dead.");
     return;
   }
-  const obj = ctx.entities.get(objId);
-  if (obj?.kind !== 'object' || !obj.lootable || !obj.objectItemId) return;
-  if (dist2d(p.pos, obj.pos) > INTERACT_RANGE) {
+  const mob = ctx.entities.get(mobId);
+  if (!mob || mob.kind !== 'mob' || !mob.dead) return;
+  const componentTags = MOBS[mob.templateId]?.componentTags;
+  if (!isHarvestableCorpse(componentTags)) {
+    ctx.error(meta.entityId, 'That corpse has nothing to harvest.');
+    return;
+  }
+  if (dist2d(p.pos, mob.pos) > INTERACT_RANGE) {
     ctx.error(meta.entityId, 'Too far away.');
     return;
   }
-  if (tryStartNythraxisWardChannel(ctx, obj, p)) return;
-  if (activateNythraxisRelic(ctx, obj, meta)) return;
-  if (interactObjectForQuests(ctx, obj, meta)) return;
+  const claim = resolveCorpseHarvest(mob.harvestClaimedBy, meta.entityId);
+  if (!claim.success) {
+    ctx.error(meta.entityId, 'This corpse has already been harvested.');
+    return;
+  }
+  // Capacity gate BEFORE consuming the single-use claim: addItem is never
+  // capacity-capped (the command boundary owns the pre-check, like
+  // lootCorpse/pickUpObject in this file), and a full-bags refusal must leave
+  // the corpse unclaimed for the next harvester. The gate runs on the
+  // deterministic pre-roll focus set so a refused command draws NO rng, and it
+  // reserves the MAXIMUM the tier roll can add per component
+  // (harvestTierQuantity of the top tier, focus-boosted by the player's
+  // persistent town focus per component, fit cumulatively): a gate on less
+  // could pass on a nearly-full stack and let the uncapped addItem spill past
+  // capacity.
+  const wanted: InvSlot[] = [];
+  for (const component of effectiveFocusComponents(componentTags ?? [], components ?? [])) {
+    const wantedItemId = HARVEST_COMPONENT_ITEMS[component];
+    if (!wantedItemId) continue;
+    const maxQty = focusedHarvestQuantity('legendary', component, meta.townFocus);
+    const existing = wanted.find((w) => w.itemId === wantedItemId);
+    if (existing) existing.count += maxQty;
+    else wanted.push({ itemId: wantedItemId, count: maxQty });
+  }
+  if (wanted.length > 0 && !fitsAll(meta.inventory, bagCapacity(meta.bags), wanted)) {
+    ctx.error(meta.entityId, 'Your bags are full.');
+    return;
+  }
+  mob.harvestClaimedBy = claim.claimedBy;
+  // #1145: a rare-or-better monster material is stamped with the harvester's
+  // name (a non-fungible instance slot); anything below that rarity stays a
+  // plain fungible grant, same as before this issue. One rarity roll per
+  // yielded component, same one-draw-per-yield convention as
+  // resolveCorpseFocusHarvest's own tier roll.
+  const yields = resolveCorpseFocusHarvest(componentTags ?? [], components ?? [], ctx.rng);
+  for (const y of yields) {
+    const itemId = HARVEST_COMPONENT_ITEMS[y.component];
+    if (!itemId) continue;
+    // #1143: the player's persistent town focus adds a bonus on top of the
+    // #1142 roll for a focused component; an unfocused component's tier is
+    // exactly the roll above, untouched.
+    const tier = applyFocusTierBonus(y.tier, y.component, meta.townFocus);
+    // #1145: a rare-or-better monster material is stamped with the harvester's
+    // name (a non-fungible instance slot); anything below that rarity stays a
+    // plain fungible grant at the (focus-adjusted) tier's yield quantity, same
+    // as before this issue. One rarity roll per yielded component, independent
+    // of the component's tier roll/bonus above.
+    const rarity = rollCorpseMaterialRarity(ctx.rng);
+    if (isSignableMaterialRarity(rarity)) {
+      ctx.addItemInstance(itemId, { signer: meta.name }, meta.entityId);
+    } else {
+      // #1143: the same per-point yield bonus applied to the tier's base
+      // quantity, on top of the tier shift above, so focus below the
+      // 5-point tier-shift threshold still does something.
+      ctx.addItem(itemId, focusedHarvestQuantity(tier, y.component, meta.townFocus), meta.entityId);
+    }
+  }
+}
+
+/**
+ * `harvestTierQuantity(tier)` with the player's persistent town focus (#1143)
+ * yield bonus applied on top, rounded to the nearest whole item. Never
+ * negative and never below the tier's unfocused quantity.
+ */
+function focusedHarvestQuantity(
+  tier: HarvestTier,
+  component: string,
+  focus: FocusAllocation,
+): number {
+  return Math.round(applyFocusBonus(harvestTierQuantity(tier), component, focus));
+}
+
+export function pickUpObject(ctx: SimContext, objId: number, pid?: number): boolean {
+  const r = ctx.resolve(pid);
+  if (!r) return false;
+  const { meta, e: p } = r;
+  // Dead players (released ghosts included) cannot pick up world objects.
+  if (p.dead) {
+    ctx.error(meta.entityId, "You can't do that while dead.");
+    return false;
+  }
+  const obj = ctx.entities.get(objId);
+  if (obj?.kind !== 'object' || !obj.lootable || !obj.objectItemId) return false;
+  if (dist2d(p.pos, obj.pos) > INTERACT_RANGE) {
+    ctx.error(meta.entityId, 'Too far away.');
+    return false;
+  }
+  const beforeCastingAbility = p.castingAbility;
+  const beforeChanneling = p.channeling;
+  if (tryStartNythraxisWardChannel(ctx, obj, p)) {
+    return (
+      p.castingAbility === 'nythraxis_ward_channel' &&
+      (beforeCastingAbility !== p.castingAbility || beforeChanneling !== p.channeling)
+    );
+  }
+  const beforeRelicLootable = obj.lootable;
+  const beforeRelicNextId = ctx.nextId;
+  if (activateNythraxisRelic(ctx, obj, meta)) {
+    return obj.lootable !== beforeRelicLootable || ctx.nextId !== beforeRelicNextId;
+  }
+  const beforeQuestProgress = meta.counters.questProgress;
+  const beforeQuestNextId = ctx.nextId;
+  if (interactObjectForQuests(ctx, obj, meta)) {
+    return meta.counters.questProgress !== beforeQuestProgress || ctx.nextId !== beforeQuestNextId;
+  }
   const def = ITEMS[obj.objectItemId];
   if (def?.questId) {
     const qp = meta.questLog.get(def.questId);
     if (!qp || (qp.state !== 'active' && qp.state !== 'ready')) {
       ctx.error(meta.entityId, def.pickupDeny ?? `You cannot take the ${def.name} yet.`);
-      return;
+      return false;
     }
     const quest = QUESTS[def.questId];
     const objIdx = quest.objectives.findIndex(
@@ -206,23 +357,26 @@ export function pickUpObject(ctx: SimContext, objId: number, pid?: number): void
     );
     if (objIdx < 0) {
       ctx.error(meta.entityId, def.pickupEnough ?? `${def.name} offers nothing more.`);
-      return;
+      return false;
     }
     if (
       objIdx >= 0 &&
       ctx.countItem(obj.objectItemId, meta.entityId) >= quest.objectives[objIdx].count
     ) {
       ctx.error(meta.entityId, def.pickupEnough ?? 'You have enough of those.');
-      return;
+      return false;
     }
   }
   if (!ctx.canAddItem(obj.objectItemId, 1, meta.entityId)) {
     ctx.error(meta.entityId, 'Your bags are full.');
-    return;
+    return false;
   }
   ctx.addItem(obj.objectItemId, 1, meta.entityId);
   obj.lootable = false;
   obj.respawnTimer = OBJECT_RESPAWN;
+  // Success only: a capacity-refused attempt returned above and never counts.
+  ctx.bumpDeedStat(meta, 'groundObjectsLooted', 1);
+  return true;
 }
 
 export function interact(ctx: SimContext, pid?: number): void {
@@ -277,6 +431,12 @@ export function interact(ctx: SimContext, pid?: number): void {
         pickUpObject(ctx, target.id, p.id);
         return;
       }
+      if (target.kind === 'npc' && ctx.bankerIds.includes(target.id)) {
+        // Opening the bank window counts as banker business for the NPC ledger.
+        deedsMod.onBankerBusinessForDeeds(ctx, r.meta, target.templateId);
+        ctx.emit({ type: 'bank', pid: p.id });
+        return;
+      }
       if (ctx.isQuestInteractionEntity(target)) {
         ctx.talkToNpc(target.id, p.id);
         return;
@@ -326,6 +486,12 @@ export function interact(ctx: SimContext, pid?: number): void {
     }
     if (tryStartNythraxisWardChannel(ctx, obj, p)) return;
     pickUpObject(ctx, obj.id, p.id);
+    return;
+  }
+  if (questEntity && ctx.bankerIds.includes(questEntity.id)) {
+    // Opening the bank window counts as banker business for the NPC ledger.
+    deedsMod.onBankerBusinessForDeeds(ctx, r.meta, questEntity.templateId);
+    ctx.emit({ type: 'bank', pid: p.id });
     return;
   }
   if (questEntity) ctx.talkToNpc(questEntity.id, p.id);

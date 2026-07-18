@@ -6,6 +6,7 @@
 // OPERATOR RULING, 2026-07-02, ip-refactor/02-WORKING-MEMORY.md); ability/aura IDS are frozen.
 
 import { describe, expect, it } from 'vitest';
+import { QUESTS } from '../../src/sim/data';
 import type { Recorder } from './record';
 import { record } from './record';
 import { SCENARIOS } from './scenarios';
@@ -152,9 +153,10 @@ describe('coverage: each scenario fires its subsystem', () => {
     expect(logs.some((t) => t.startsWith('You abandon'))).toBe(true);
     // Demon Heal channel ticked: applyDemonHealTick emits a heal2 with ability 'Demon Heal'.
     expect(ev.some((e) => e.type === 'heal2' && e.ability === 'Demon Heal')).toBe(true);
-    // Demon swap exercised BOTH branches: a new demon answered, then the same demon faded.
-    expect(logs.some((t) => t.includes('answers your summons'))).toBe(true);
-    expect(logs.some((t) => t.includes('fades back into the void'))).toBe(true);
+    // Demon swap AND same-demon re-summon both produce a fresh demon answering the call
+    // (re-summoning while the current demon is alive dismisses it and summons anew, it
+    // never toggles off into no pet).
+    expect(logs.filter((t) => t.includes('answers your summons')).length).toBeGreaterThanOrEqual(4);
     // despawnPet scrubbed the hunter's targetId (set to the demon, nulled on its hard despawn).
     expect((rec.sim as any).player.targetId).toBeNull();
     // abandon's despawnPersistentPet scrub pulled the biter off the (now-gone) pet.
@@ -421,7 +423,7 @@ describe('coverage: each scenario fires its subsystem', () => {
     // onMobKilledForQuests bumped progress on each forest_wolf death.
     expect(
       ev.filter((e) => e.type === 'questProgress' && e.questId === 'q_wolves').length,
-    ).toBeGreaterThanOrEqual(8);
+    ).toBeGreaterThanOrEqual(QUESTS.q_wolves.objectives[0].count);
     // checkQuestReady promoted active -> ready, and the quest was turned in.
     expect(ev.some((e) => e.type === 'questReady' && e.questId === 'q_wolves')).toBe(true);
     expect(ev.some((e) => e.type === 'questDone' && e.questId === 'q_wolves')).toBe(true);
@@ -731,6 +733,26 @@ describe('coverage: each scenario fires its subsystem', () => {
     expect(druid?.auras?.some((a: Ev) => a.kind === 'form_bear')).toBe(false);
   });
 
+  it('hit_rating_heroic pair: gear changes the threshold, never the RNG draw order', () => {
+    const ungearedScenario = SCENARIOS.find((s) => s.name === 'hit_rating_heroic_ungeared')!;
+    const gearedScenario = SCENARIOS.find((s) => s.name === 'hit_rating_heroic_geared')!;
+    const ungeared = record(ungearedScenario);
+    const geared = record(gearedScenario);
+
+    expect(ungeared.rec.sim.player.hitRating).toBe(0);
+    expect(geared.rec.sim.player.hitRating).toBe(170);
+    const gearedMob = (geared.rec.sim as any).entities.get(geared.rec.notes.mobId);
+    expect(gearedMob.level - geared.rec.sim.player.level).toBe(3);
+    expect(
+      geared.rec.allEvents.some(
+        (e: Ev) => e.type === 'damage' && e.sourceId === geared.rec.sim.player.id,
+      ),
+    ).toBe(true);
+
+    expect(geared.trace.draws).toBe(ungeared.trace.draws);
+    expect(geared.trace.drawDigest).toBe(ungeared.trace.drawDigest);
+  });
+
   it('c5_auto_attack: melee swing table + ranged Auto Shot + wand + queued on-swing fire', () => {
     const rec = run('c5_auto_attack');
     const ev = rec.allEvents as Ev[];
@@ -809,8 +831,8 @@ describe('coverage: each scenario fires its subsystem', () => {
     // atomic swap moved goods + coin both directions.
     expect(sim.countItem('wolf_fang', a)).toBe(1); // 3 - 2
     expect(sim.countItem('wolf_fang', b)).toBe(2);
-    expect(sim.countItem('baked_bread', a)).toBe(1);
-    expect(sim.countItem('baked_bread', b)).toBe(1); // 2 - 1
+    expect(sim.countItem('baked_bread', a)).toBe(6); // 5 starter + 1 traded
+    expect(sim.countItem('baked_bread', b)).toBe(6); // 5 starter + 2 - 1
     expect(sim.players.get(a)?.copper).toBe(80); // 100 - 30 + 10
     expect(sim.players.get(b)?.copper).toBe(70); // 50 - 10 + 30
     // every session ended cleared (swap close + explicit cancel + drift sweep).
@@ -877,5 +899,78 @@ describe('coverage: each scenario fires its subsystem', () => {
     const tankMeta = [...sim.players.values()].find((m: any) => m.name === 'NyxTank') as any;
     expect(tankMeta.raidLockouts.has('nythraxis_boss_arena')).toBe(true);
     expect(chats.some((e) => e.text === 'Malric...')).toBe(true);
+  });
+
+  it('warrior_row_capstones: double charge, thresholded fear, victory rush heal, bladestorm ticks', () => {
+    const rec = run('warrior_row_capstones');
+    const sim = rec.sim as any;
+    const pid = sim.playerId;
+    const ev = rec.allEvents as Ev[];
+    // Double Charge: BOTH stored uses were spent while one recharge timer ran;
+    // the classic single-cooldown gate would have blocked cast #2.
+    expect(rec.notes.chargeSpent).toBe(2);
+    expect(rec.notes.chargeRecharging).toBe(true);
+    // Intimidating Shout feared a wolf; Lingering Dread armed its threshold.
+    const feared = entities(rec).find((e) =>
+      e.auras?.some((a: any) => a.id === 'fear_incap'),
+    ) as any;
+    expect(feared).toBeTruthy();
+    const fear = feared.auras.find((a: any) => a.id === 'fear_incap');
+    expect(fear.breaksOnDamage).toBe(true);
+    expect(fear.breakThreshold).toBeGreaterThan(0);
+    // Victory Rush: the on-kill strike healed the player.
+    expect(ev.some((e) => (e.type === 'heal' || e.type === 'heal2') && e.targetId === pid)).toBe(
+      true,
+    );
+    // Bladestorm: the self-centered channel pulsed damage.
+    expect(ev.some((e) => e.type === 'damage' && e.ability === 'Bladestorm')).toBe(true);
+  });
+
+  it('professions_craft: denial draws nothing, each craft draws once, and the vestments proc mints + surfaces a masterwork', () => {
+    const { trace, rec } = record(SCENARIOS.find((s) => s.name === 'professions_craft')!);
+    const ev = rec.allEvents as Ev[];
+    const pid = rec.notes.pid as number;
+    const crafts = ev.filter((e) => e.type === 'craftResult');
+
+    // Phase 1 denial: an ok:false craftResult with the insufficient_materials reason.
+    expect(crafts.some((e) => e.ok === false && e.reason === 'insufficient_materials')).toBe(true);
+    // Phase 2/4 plain crafts (consumable def): ok:true, def quality common, no masterwork flag.
+    expect(
+      crafts.some((e) => e.ok === true && e.quality === 'common' && e.masterwork === undefined),
+    ).toBe(true);
+
+    // Phase 3 masterwork proc: the personal masterwork SimEvent (ids only).
+    const mw = ev.find((e) => e.type === 'masterwork');
+    expect(mw, 'masterwork event did not fire (proc missed for the pinned seed)').toBeTruthy();
+    expect(mw!.recipeId).toBe('recipe_eastbrook_ritual_vestments');
+    expect(mw!.itemId).toBe('eastbrook_ritual_vestments');
+    expect(mw!.crafter).toBe(pid);
+    expect(mw!.pid).toBe(pid);
+    // The craftResult mirror carries the proc: masterwork true, output DEF quality (uncommon).
+    expect(
+      crafts.some(
+        (e) =>
+          e.ok === true &&
+          e.itemId === 'eastbrook_ritual_vestments' &&
+          e.quality === 'uncommon' &&
+          e.masterwork === true,
+      ),
+    ).toBe(true);
+
+    // The minted copy is one signed instance carrying the masterwork marker, and the
+    // per-player read surface reflects the proc.
+    const meta = (rec.sim as any).players.get(pid);
+    const slots = meta.inventory.filter((s: any) => s.itemId === 'eastbrook_ritual_vestments');
+    expect(slots.length).toBe(1);
+    expect(slots[0].instance?.rolled?.masterwork).toBe(true);
+    expect(meta.lastMasterwork).toMatchObject({
+      recipeId: 'recipe_eastbrook_ritual_vestments',
+      itemId: 'eastbrook_ritual_vestments',
+      crafter: pid,
+    });
+
+    // Draw contract: the denial draws zero and each of the three successful crafts
+    // draws exactly the single masterwork proc roll (0 + 3 = 3 across the whole run).
+    expect(trace.draws).toBe(3);
   });
 });

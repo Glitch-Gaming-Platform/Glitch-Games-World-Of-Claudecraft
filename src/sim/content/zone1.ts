@@ -29,18 +29,19 @@ export const ZONE1_ZONE: ZoneDef = {
   graveyard: GRAVEYARD_POS,
   lakes: [LAKE],
   pois: [
-    { x: 0, z: -3, label: 'Eastbrook' },
-    { x: -2, z: 70, label: 'Wolf Run' },
-    { x: 65, z: 0, label: 'Boar Meadow' },
-    { x: -88, z: 82, label: 'Mirror Lake' },
-    { x: -60, z: 4, label: 'Sableweb' },
-    { x: -84, z: -64, label: 'Copper Dig' },
-    { x: 76, z: -76, label: 'Bandit Camp' },
-    { x: 80, z: 80, label: 'Fallen Chapel' },
-    { x: -5, z: -52, label: 'Reliquary Hill' },
-    { x: 40, z: 140, label: 'Brightwood Glade' },
+    { x: 0, z: -3, label: 'Eastbrook', id: 'eastbrook' },
+    { x: -2, z: 70, label: 'Wolf Run', id: 'wolf_run' },
+    { x: 65, z: 0, label: 'Boar Meadow', id: 'boar_meadow' },
+    { x: -88, z: 82, label: 'Mirror Lake', id: 'mirror_lake' },
+    { x: -60, z: 4, label: 'Sableweb', id: 'sableweb' },
+    { x: -84, z: -64, label: 'Copper Dig', id: 'copper_dig' },
+    { x: 76, z: -76, label: 'Bandit Camp', id: 'bandit_camp' },
+    { x: 80, z: 80, label: 'Fallen Chapel', id: 'fallen_chapel' },
+    { x: -5, z: -52, label: 'Reliquary Hill', id: 'reliquary_hill' },
+    { x: 40, z: 140, label: 'Brightwood Glade', id: 'brightwood_glade' },
+    { x: -11, z: -112, label: 'The Sowfield', id: 'the_sowfield' },
   ],
-  welcome: 'Find Marshal Redbrook in town — he has work for you.',
+  welcome: 'Find Marshal Redbrook in town - he has work for you.',
   welcomeQuestId: 'q_wolves',
 };
 
@@ -94,7 +95,7 @@ export const ZONE1_MOBS: Record<string, MobTemplate> = {
     minLevel: 1,
     maxLevel: 2,
     family: 'beast',
-    hpBase: 28,
+    hpBase: 40,
     hpPerLevel: 14,
     dmgBase: 3,
     dmgPerLevel: 1.6,
@@ -111,6 +112,7 @@ export const ZONE1_MOBS: Record<string, MobTemplate> = {
     scale: 0.9,
     color: 0x7f8c8d,
     packFrenzy: { radius: 12, hasteMult: 1.3, duration: 8 },
+    componentTags: ['hide', 'fang'],
   },
   old_greyjaw: {
     id: 'old_greyjaw',
@@ -138,6 +140,7 @@ export const ZONE1_MOBS: Record<string, MobTemplate> = {
     ],
     scale: 1.25,
     color: 0x566061,
+    componentTags: ['hide', 'fang', 'claw'],
   },
   wild_boar: {
     id: 'wild_boar',
@@ -145,7 +148,7 @@ export const ZONE1_MOBS: Record<string, MobTemplate> = {
     minLevel: 2,
     maxLevel: 3,
     family: 'beast',
-    hpBase: 34,
+    hpBase: 38,
     hpPerLevel: 16,
     dmgBase: 4,
     dmgPerLevel: 1.8,
@@ -163,6 +166,7 @@ export const ZONE1_MOBS: Record<string, MobTemplate> = {
     ],
     scale: 0.85,
     color: 0x935116,
+    componentTags: ['hide', 'tusk'],
   },
   webwood_spider: {
     id: 'webwood_spider',
@@ -170,7 +174,7 @@ export const ZONE1_MOBS: Record<string, MobTemplate> = {
     minLevel: 2,
     maxLevel: 4,
     family: 'spider',
-    hpBase: 30,
+    hpBase: 36,
     hpPerLevel: 15,
     dmgBase: 4,
     dmgPerLevel: 1.7,
@@ -194,6 +198,7 @@ export const ZONE1_MOBS: Record<string, MobTemplate> = {
     ],
     scale: 0.9,
     color: 0x4a235a,
+    componentTags: ['venomSac', 'silk'],
   },
   mogger: {
     id: 'mogger',
@@ -275,6 +280,7 @@ export const ZONE1_MOBS: Record<string, MobTemplate> = {
     ],
     scale: 0.8,
     color: 0x52be80,
+    componentTags: ['gills', 'hide'],
     // Mudfin Hex: the skulker's oracle-chant briefly turns a foe into a critter.
     // Low chance and it breaks the instant the victim takes damage (the murloc's
     // own next bite ends it), so it's a brief flavor incap — but a murloc pack
@@ -590,12 +596,14 @@ export const ZONE1_NPCS: Record<string, NpcDef> = {
     pos: { x: 7, z: 16.5 },
     facing: -2.7,
     color: 0x707b7c,
-    questIds: [],
+    questIds: ['q_archetype_acceptance', 'q_prof_make_amends', 'q_prof_hobby_switch'],
     vendorItems: [
       'eastbrook_arming_sword',
+      'eastbrook_greatsword',
       'bronzework_mace',
       'vale_carving_knife',
       'hickory_shortstaff',
+      'eastbrook_buckler',
       'eastbrook_chain_vest',
       'valespun_robe',
       'tanned_leather_jerkin',
@@ -627,8 +635,63 @@ export const ZONE1_NPCS: Record<string, NpcDef> = {
     pos: { x: -4, z: -14 },
     facing: -2.14,
     color: 0xa04000,
-    questIds: ['q_mine'],
+    questIds: ['q_prof_intro', 'q_mine'],
     greeting: "Whole dig's crawling with those dirt-caked vermin!",
+  },
+  bursar_fernando: {
+    id: 'bursar_fernando',
+    name: 'Bursar Fernando',
+    title: 'The Gilded Strongbox',
+    // east side of the square, facing the approach toward the well and Merchant
+    pos: { x: 13, z: 8 },
+    facing: -Math.PI / 2,
+    color: 0xc9a227,
+    questIds: [],
+    banker: true,
+    greeting: 'Welcome to the Gilded Strongbox. Your goods rest safe behind our locks.',
+  },
+  card_master: {
+    id: 'card_master',
+    name: 'Card Master',
+    title: 'Dealer of Chance',
+    // Across the square from the bank, out of the way of the well/Merchant traffic.
+    pos: { x: 13, z: 2 },
+    facing: -Math.PI / 2,
+    color: 0x7a2f8f,
+    questIds: [],
+    cardMaster: true,
+    greeting: 'Care for a Card Duel? Best of three, winner takes the bragging rights.',
+  },
+  groundskeeper_bram: {
+    id: 'groundskeeper_bram',
+    name: 'Groundskeeper Bram',
+    title: 'Keeper of the Sowfield',
+    // At the Sowfield's north gate with the book of fixtures (vale_cup_layout
+    // BRAM_POS). dynamic: the generic surface-placement loop skips him; the
+    // Vale Cup module spawns him at world init under a RESERVED entity id so
+    // adding him never shifts the ctor id sequence (parity goldens pin nextId).
+    pos: { x: -6, z: -82 },
+    facing: Math.PI,
+    color: 0x3f7d34,
+    questIds: [],
+    dynamic: true,
+    greeting:
+      'The truce holds at the Sowfield, $C: boots and shoulders only. Care to play for the Copper Pail?',
+  },
+  chronicler_saul: {
+    id: 'chronicler_saul',
+    name: 'Saul the Chronicler',
+    title: 'The Vale Chronicle',
+    // Southeast corner of the square, on the quiet side away from the well
+    // cluster and the player start, looking back northwest across the square
+    // (nearest authored neighbor ~13 units; he had been shoulder to shoulder
+    // with the well crowd).
+    pos: { x: 15, z: -16 },
+    facing: 2.4,
+    color: 0xd08a2e, // warm amber: the chronicler tint is his identity (shared mage visual)
+    questIds: [],
+    greeting:
+      'Every deed worth doing is worth writing down twice, $N: once for the ledger and once for the fireside.',
   },
 };
 
@@ -637,15 +700,41 @@ export const ZONE1_NPCS: Record<string, NpcDef> = {
 // ---------------------------------------------------------------------------
 
 export const ZONE1_QUESTS: Record<string, QuestDef> = {
+  // Professions onboarding (issue #1701 follow-up): the very first quest a
+  // new adventurer can take, no prerequisite and no minLevel gate (defaults
+  // to available at level 1, same as q_wolves). Gathering/crafting/town focus
+  // are otherwise entirely undiscoverable: nothing in the starting flow ever
+  // points a new player at them (see the professions.ts GATHERING_PROFESSIONS
+  // comment: no level/quest/tool gate exists at the mechanic level either, so
+  // there was no natural "unlock" moment to hang a quest off before this).
+  // A genuine gather objective credits successful ore-node harvests directly.
+  // It deliberately does not target the node's shared bone_fragments output:
+  // that material also drops from mobs, salvage, and the market, so inventory
+  // ownership cannot prove that the player mined it. foreman_odell is the
+  // existing mine-themed NPC (already gives q_mine), so this reuses him rather
+  // than inventing a new trainer NPC.
+  q_prof_intro: {
+    id: 'q_prof_intro',
+    name: 'A Trade for Every Hand',
+    giverNpcId: 'foreman_odell',
+    turnInNpcId: 'foreman_odell',
+    text: "Every soul in Eastbrook works a trade besides the sword, $N. There are ore veins in the rocks around the Copper Dig, southwest of town. Go swing a pick and work 5 of them yourself, mind; I'll know the difference.",
+    completionText:
+      "See? Ore gathered and callus on your hands. Keep at the mining, logging, and herb-picking as you travel the roads, and when you're back in town, mind the Town Focus board by the market and the crafting bench nearby. There's a fair trade waiting in all of it, if you want it.",
+    objectives: [{ type: 'gather', nodeType: 'ore', count: 5, label: 'Ore vein harvested' }],
+    xpReward: 150,
+    copperReward: 50,
+    itemRewards: {},
+  },
   q_wolves: {
     id: 'q_wolves',
     name: 'Wolves at the Door',
     giverNpcId: 'marshal_redbrook',
     turnInNpcId: 'marshal_redbrook',
-    text: 'The forest wolves grow bold, snapping at travelers on the north road. Thin their numbers, $N. Slay 8 Forest Wolves and Eastbrook will breathe easier.',
+    text: 'The forest wolves grow bold, snapping at travelers on the north road. Thin their numbers, $N. Slay 3 Forest Wolves and Eastbrook will breathe easier.',
     completionText: 'Fine work. The road feels safer already.',
     objectives: [
-      { type: 'kill', targetMobId: 'forest_wolf', count: 8, label: 'Forest Wolf slain' },
+      { type: 'kill', targetMobId: 'forest_wolf', count: 3, label: 'Forest Wolf slain' },
     ],
     xpReward: 250,
     copperReward: 75,
@@ -943,9 +1032,66 @@ export const ZONE1_QUESTS: Record<string, QuestDef> = {
     minLevel: 6,
     suggestedPlayers: 3,
   },
+  // Profession attunement lives with Smith Haldren after the gathering intro.
+  // Every transition is selected on acceptance, persisted with the quest, and
+  // revalidated by the authoritative turn-in effect.
+  q_archetype_acceptance: {
+    id: 'q_archetype_acceptance',
+    name: 'A Craft to Call Your Own',
+    giverNpcId: 'smith_haldren',
+    turnInNpcId: 'smith_haldren',
+    text: 'Skill is knowledge, $N, but attunement is a promise. Choose two neighboring crafts whose methods you will carry as your majors, then bring me ore worked from the Vale with your own hands.',
+    completionText:
+      'The promise holds. These two crafts are now your majors, and the knowledge opposite them becomes your hobby.',
+    objectives: [{ type: 'gather', nodeType: 'ore', count: 3, label: 'Ore vein harvested' }],
+    xpReward: 150,
+    copperReward: 0,
+    itemRewards: {},
+    requiresQuest: 'q_prof_intro',
+    repeatable: true,
+    shareable: false,
+    completionEffect: { type: 'attunePair', mode: 'new' },
+  },
+  q_prof_make_amends: {
+    id: 'q_prof_make_amends',
+    name: 'Making Amends',
+    giverNpcId: 'smith_haldren',
+    turnInNpcId: 'smith_haldren',
+    text: 'You have carried that pair before, $N. Returning is no fresh vow. Help keep the Vale road clear, and the work will remind your hands what they once knew.',
+    completionText: 'The old rhythm returns. Your former pair is active once more.',
+    objectives: [
+      { type: 'kill', targetMobId: 'forest_wolf', count: 5, label: 'Forest Wolf slain' },
+    ],
+    xpReward: 100,
+    copperReward: 0,
+    itemRewards: {},
+    requiresQuest: 'q_prof_intro',
+    repeatable: true,
+    shareable: false,
+    resolvedObjectiveCounts: 'archetypeAmends',
+    completionEffect: { type: 'attunePair', mode: 'return' },
+  },
+  q_prof_hobby_switch: {
+    id: 'q_prof_hobby_switch',
+    name: 'A Different Pastime',
+    giverNpcId: 'smith_haldren',
+    turnInNpcId: 'smith_haldren',
+    text: 'Majors demand a vow. A hobby only asks where your curiosity wanders, $N. Gather a few herbs and decide which craft opposite your majors you want to pursue.',
+    completionText:
+      'A lighter choice, but a useful one. Follow that curiosity as far as rare work will take it.',
+    objectives: [{ type: 'gather', nodeType: 'herb', count: 3, label: 'Herb patch harvested' }],
+    xpReward: 75,
+    copperReward: 0,
+    itemRewards: {},
+    requiresQuest: 'q_prof_intro',
+    repeatable: true,
+    shareable: false,
+    completionEffect: { type: 'switchHobby' },
+  },
 };
 
 export const ZONE1_QUEST_ORDER = [
+  'q_prof_intro',
   'q_wolves',
   'q_boars',
   'q_spiders',
@@ -964,6 +1110,9 @@ export const ZONE1_QUEST_ORDER = [
   'q_hollow',
   'q_gravecallers_trail',
   'q_mogger',
+  'q_archetype_acceptance',
+  'q_prof_make_amends',
+  'q_prof_hobby_switch',
 ];
 
 // ---------------------------------------------------------------------------
@@ -1098,7 +1247,7 @@ export const ZONE1_PROPS: ZonePropsDef = {
   wells: [{ x: 0, z: 2, r: 1.5 }],
   stalls: [
     { x: -8.5, z: 3, rot: Math.PI / 2, r: 1.7 },
-    { x: 9.5, z: 17.5, rot: -2.7, r: 1.7 }, // Smith Haldren's smithy stall
+    { x: 9.5, z: 17.5, rot: -2.7, r: 1.7, smithy: true }, // Smith Haldren's stall
     { x: 0, z: 11.5, rot: Math.PI, r: 1.8 }, // The Merchant's World Market stall
   ],
   mines: [{ x: -88, z: -68, rot: 0.8 }],

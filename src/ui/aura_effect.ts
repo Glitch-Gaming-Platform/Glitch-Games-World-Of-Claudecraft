@@ -17,12 +17,18 @@
 //   - mortal_wound/cost_tax/critvuln/vulnerability/spellvuln/expose/buff_dodge:
 //     value is a 0..1 fraction shown as a percent.
 import type { AuraKind } from '../sim/types';
+import {
+  FAERIE_FIRE_ARMOR_PCT,
+  RECKLESSNESS_RAGE_GEN,
+  SUNDER_ARMOR_PCT_PER_STACK,
+} from '../sim/types';
 
 export type AuraSchool = 'physical' | 'fire' | 'frost' | 'arcane' | 'shadow' | 'holy' | 'nature';
 
 // Structural subset of Aura the descriptor needs; keeps this module decoupled from
 // the full sim Aura shape so a Vitest can drive it with plain literals.
 export interface AuraEffectInput {
+  id?: string;
   kind: AuraKind;
   value: number;
   value2?: number;
@@ -60,6 +66,15 @@ const flatStat = (statKey: string, value: number): AuraEffectDescriptor => ({
  * one-line summary (the tooltip then falls back to name + remaining time only).
  */
 export function auraEffectDescriptor(a: AuraEffectInput): AuraEffectDescriptor | null {
+  if (a.id === 'temporal_hourglass' && a.kind === 'stasis') {
+    return { key: `${KEY}.temporalHourglass`, nums: {} };
+  }
+  if (a.id === 'heating_up' && a.kind === 'internal_cd') {
+    return { key: `${KEY}.heatingUp`, nums: {} };
+  }
+  if (a.id === 'convergence_mark' && a.kind === 'internal_cd') {
+    return { key: `${KEY}.elementalConvergencePrimed`, nums: {} };
+  }
   switch (a.kind) {
     case 'dot':
       return {
@@ -98,6 +113,23 @@ export function auraEffectDescriptor(a: AuraEffectInput): AuraEffectDescriptor |
       return flatStat('ap', -Math.abs(a.value));
     case 'buff_armor':
       return flatStat('armor', a.value);
+    case 'buff_spellpower':
+      return { key: `${KEY}.increase.sp`, nums: { value: round(a.value) } };
+    // Mage empowerment moments (owner playtest: every worn buff should read).
+    case 'combustion':
+      return { key: `${KEY}.combustionCrit`, nums: {} };
+    case 'overload':
+      return { key: `${KEY}.overloadNext`, nums: { pct: pctFromFrac(a.value) } };
+    case 'power_echo':
+      return { key: `${KEY}.powerEchoNext`, nums: { pct: pctFromFrac(a.value) } };
+    case 'ice_floes':
+      return { key: `${KEY}.iceFloesCasts`, nums: { n: round(a.value) } };
+    case 'next_cast_free':
+      return { key: `${KEY}.freeCast`, nums: {} };
+    case 'next_cast_instant':
+      return { key: `${KEY}.instantCast`, nums: {} };
+    case 'next_cast_cheap':
+      return { key: `${KEY}.cheapCast`, nums: { pct: pctFromFrac(a.value) } };
     case 'buff_int':
       return flatStat('int', a.value);
     case 'buff_agi':
@@ -112,6 +144,17 @@ export function auraEffectDescriptor(a: AuraEffectInput): AuraEffectDescriptor |
       // Percentage drain on the whole stat block (The Keeper's Toll / Resurrection
       // Sickness: value -0.75 -> "Reduces all attributes by 75%"). Always a drain.
       return { key: `${KEY}.allStatsPctReduce`, nums: { pct: pctFromFrac(a.value) } };
+    // Percent raid buffs: value is integer percent POINTS (5 = +5%), rendered directly.
+    case 'buff_stats_pct':
+      return { key: `${KEY}.increasePct.allStats`, nums: { pct: round(a.value) } };
+    case 'buff_int_pct':
+      return { key: `${KEY}.increasePct.int`, nums: { pct: round(a.value) } };
+    case 'buff_sta_pct':
+      return { key: `${KEY}.increasePct.sta`, nums: { pct: round(a.value) } };
+    case 'buff_armor_pct':
+      return { key: `${KEY}.increasePct.armor`, nums: { pct: round(a.value) } };
+    case 'buff_ap_pct':
+      return { key: `${KEY}.increasePct.ap`, nums: { pct: round(a.value) } };
     case 'buff_dodge':
       // The staggerHit mob affix rides buff_dodge with a NEGATIVE value, so the
       // sign picks the direction (mirrors flatStat).
@@ -119,10 +162,27 @@ export function auraEffectDescriptor(a: AuraEffectInput): AuraEffectDescriptor |
         key: `${KEY}.${a.value < 0 ? 'dodgeReduce' : 'dodge'}`,
         nums: { pct: pctFromFrac(a.value) },
       };
+    case 'shield_wall':
+      return { key: `${KEY}.damageReduction`, nums: { pct: pctFromFrac(a.value) } };
+    case 'guardian_ward':
+      return { key: `${KEY}.guardianWard`, nums: { pct: pctFromFrac(a.value) } };
 
     case 'sunder': {
-      // value is a FLAT armor amount per stack; total reduction is value * stacks
-      // (armor -= a.value * (a.stacks ?? 1) in the mitigation pass).
+      // Sunder Armor is a PERCENT reduction: SUNDER_ARMOR_PCT_PER_STACK per stack
+      // (effectiveArmor max-combines it, not the aura's `value`, which now carries the
+      // threat constant). Expose Armor lands the full cap in one cast.
+      const stacks = a.stacks ?? 1;
+      const pct = round(SUNDER_ARMOR_PCT_PER_STACK * stacks * 100);
+      return stacks > 1
+        ? { key: `${KEY}.armorPctStacks`, nums: { pct, stacks } }
+        : { key: `${KEY}.armorPct`, nums: { pct } };
+    }
+    case 'faerie_fire':
+      // Fixed-percent armor reduction (does not stack with Sunder).
+      return { key: `${KEY}.armorPct`, nums: { pct: round(FAERIE_FIRE_ARMOR_PCT * 100) } };
+    case 'corrode': {
+      // Mob corrosion: a FLAT, stacking armor shred (value per stack). Keeps the
+      // flat-reduction wording the old shared `sunder` kind used.
       const stacks = a.stacks ?? 1;
       const total = round(a.value * stacks);
       return stacks > 1
@@ -179,6 +239,12 @@ export function auraEffectDescriptor(a: AuraEffectInput): AuraEffectDescriptor |
       return { key: `${KEY}.formCat` };
     case 'form_travel':
       return { key: `${KEY}.formTravel`, nums: { pct: pctFromMult(a.value) } };
+    case 'battle_stance':
+      return { key: `${KEY}.battleStance` };
+    case 'berserker_stance':
+      return { key: `${KEY}.berserkerStance` };
+    case 'form_fireball':
+      return { key: `${KEY}.formFireball`, nums: { pct: pctFromMult(a.value) } };
     case 'defensive_stance':
       return { key: `${KEY}.defensiveStance` };
     case 'righteous_fury':
@@ -189,6 +255,62 @@ export function auraEffectDescriptor(a: AuraEffectInput): AuraEffectDescriptor |
       return { key: `${KEY}.scale`, nums: { pct: pctFromMult(a.value) } };
     case 'buff_jump':
       return { key: `${KEY}.jump`, nums: { pct: pctFromMult(a.value) } };
+
+    // Rune of Power / Elemental Convergence, and Direhowl's demoralize in its
+    // negative pct form: the bearer DEALS less damage (pctFromFrac abs()es it).
+    case 'buff_dmg_done':
+      return {
+        key: a.value < 0 ? `${KEY}.dmgDoneReduce` : `${KEY}.dmgDone`,
+        nums: { pct: pctFromFrac(a.value) },
+      };
+
+    // Warrior choice-row auras. Value semantics follow the live consumers:
+    //   - buff_crit/buff_rage_gen: 0..1 fraction added to crit chance / rage gen.
+    //   - buff_reckless: value is the crit fraction; the rage-gen half is the
+    //     fixed RECKLESSNESS_RAGE_GEN rageGenAuraMult applies.
+    //   - buff_avatar: value is the damage-dealt fraction (the colossus body
+    //     scale is the cosmetic AVATAR_SCALE, not shown).
+    //   - bloodbath: value is the TOTAL crit+damage fraction (stack-scaled).
+    //   - die_by_sword: value is the damage-taken cut dealDamage applies.
+    //   - sanguine: value is the swing-interval multiplier (< 1 = faster; shown
+    //     as the attacks-per-second gain, 1/value - 1) and value2 the damage
+    //     fraction.
+    case 'buff_crit':
+      return { key: `${KEY}.crit`, nums: { pct: pctFromFrac(a.value) } };
+    case 'buff_rage_gen':
+      return { key: `${KEY}.rageGen`, nums: { pct: pctFromFrac(a.value) } };
+    case 'buff_reckless':
+      return {
+        key: `${KEY}.reckless`,
+        nums: { pct: pctFromFrac(a.value), ragePct: pctFromFrac(RECKLESSNESS_RAGE_GEN) },
+      };
+    case 'buff_avatar':
+      return { key: `${KEY}.avatar`, nums: { pct: pctFromFrac(a.value) } };
+    case 'bloodbath':
+      return { key: `${KEY}.bloodbath`, nums: { pct: pctFromFrac(a.value) } };
+    case 'die_by_sword':
+      return { key: `${KEY}.dieBySword`, nums: { pct: pctFromFrac(a.value) } };
+    case 'sanguine':
+      // The haste half is shown as the attacks-per-second gain (1/mult - 1),
+      // so the designed 10% (mult 1/1.1) reads exactly 10%, not 9%.
+      return {
+        key: `${KEY}.sanguine`,
+        nums: {
+          hastePct: a.value > 0 ? Math.abs(round((1 / a.value - 1) * 100)) : 0,
+          dmgPct: pctFromFrac(a.value2 ?? 0),
+        },
+      };
+    case 'battle_trance':
+      // The warrior free-strike proc: the summary is the covered abilities,
+      // not a number (their names are baked per locale in the catalog value).
+      return { key: `${KEY}.battleTrance` };
+    case 'revenge_free':
+      return { key: `${KEY}.revengeFree` };
+    case 'victory_rush':
+      return { key: `${KEY}.victoryRush` };
+    case 'buff_maxhp_pct':
+      // Rallying Cry: value is the temporary max-health fraction.
+      return { key: `${KEY}.maxHpPct`, nums: { pct: pctFromFrac(a.value) } };
 
     default:
       return null;

@@ -1,4 +1,5 @@
 import { formatDuration } from './duration';
+import { logger } from './http/logger';
 import { parseModerationChatCommand } from './moderation_commands';
 
 export interface ModerationSession {
@@ -6,6 +7,10 @@ export interface ModerationSession {
   accountId: number;
   characterId: number;
   isAdmin: boolean;
+  // Expanded admin permission set, snapshotted at WS join (like isAdmin). The
+  // commands this service handles require 'moderation.act' or
+  // 'moderation.spectate' (see requiredCommandPermission).
+  adminPermissions: ReadonlySet<string>;
   name: string;
 }
 
@@ -19,11 +24,16 @@ export interface ModerationHost<TSession extends ModerationSession> {
   killEntity(entityId: number): void;
   enterSpectate(moderator: TSession, target: TSession): void;
   exitSpectate(moderator: TSession): void;
+  enterJailVisit(moderator: TSession): void;
+  exitJailVisit(moderator: TSession): void;
+  isJailed(session: TSession): boolean;
+  jail(moderator: TSession, target: TSession, minutes: number): void;
+  unjail(moderator: TSession, target: TSession): void;
 }
 
 export interface ModerationAudit {
   recordAction(input: {
-    action: 'kick' | 'kill';
+    action: 'kick' | 'kill' | 'jail' | 'unjail';
     accountId: number;
     adminAccountId: number;
     reason: string;
@@ -51,6 +61,25 @@ export interface ModerationAudit {
 const BAN_MESSAGE = 'This account has been banned.';
 const SUSPEND_MESSAGE = 'This account is suspended.';
 const RENAME_MESSAGE = 'A moderator requires one of your characters to be renamed.';
+const NO_PERMISSION_MESSAGE = "You don't have permission to do that.";
+const JAIL_REASON = 'Jailed by in-game moderator command';
+const UNJAIL_REASON = 'Released by in-game moderator command';
+
+type ModerationCommandKind = NonNullable<ReturnType<typeof parseModerationChatCommand>>['kind'];
+
+function requiredCommandPermission(kind: ModerationCommandKind): string {
+  return kind === 'spectate' || kind === 'unspectate' ? 'moderation.spectate' : 'moderation.act';
+}
+
+// Dispatch-site gate: whether this session may even attempt a moderation chat
+// command. A session with neither permission falls through to ordinary chat,
+// exactly like a non-staff player (its "/kick x" broadcasts as plain text).
+export function canAttemptModerationCommands(session: ModerationSession): boolean {
+  return (
+    session.adminPermissions.has('moderation.act') ||
+    session.adminPermissions.has('moderation.spectate')
+  );
+}
 
 export class ModerationService<TSession extends ModerationSession> {
   constructor(
@@ -63,10 +92,17 @@ export class ModerationService<TSession extends ModerationSession> {
   handleChatCommand(actor: TSession, text: string): boolean {
     const command = parseModerationChatCommand(text);
     if (!command) return false;
-    // Defense in depth: the live caller already gates on isAdmin, but moderation is
-    // a sensitive API, so refuse non-admins here too. Swallow (return true) rather
-    // than let a rejected "/kick ..." leak into ordinary chat.
+    // Defense in depth: the live caller already gates on the moderation
+    // permissions, but moderation is a sensitive API, so refuse non-staff here
+    // too. Swallow (return true) rather than let a rejected "/kick ..." leak
+    // into ordinary chat.
     if (!actor.isAdmin) return true;
+    // Staff without the command's permission (e.g. a spectate-only role trying
+    // /ban) get an explicit refusal instead of a silent swallow.
+    if (!actor.adminPermissions.has(requiredCommandPermission(command.kind))) {
+      this.host.notice(actor, NO_PERMISSION_MESSAGE);
+      return true;
+    }
     switch (command.kind) {
       case 'kick':
         this.kick(actor, command.name, command.reason);
@@ -92,6 +128,12 @@ export class ModerationService<TSession extends ModerationSession> {
       case 'unspectate':
         this.host.exitSpectate(actor);
         break;
+      case 'jail':
+        this.jail(actor, command.name, command.minutes, command.reason, command.malformed);
+        break;
+      case 'unjail':
+        this.unjail(actor, command.name, command.malformed);
+        break;
     }
     return true;
   }
@@ -110,7 +152,7 @@ export class ModerationService<TSession extends ModerationSession> {
         this.host.kick(target);
         this.host.systemNotice(actor, `Kicked ${target.name}.`);
       })
-      .catch((err) => console.error('failed to audit in-game kick:', err));
+      .catch((err) => logger.error({ err }, 'failed to audit in-game kick'));
   }
 
   private killTarget(actor: TSession, name: string | null, reason: string): void {
@@ -127,7 +169,7 @@ export class ModerationService<TSession extends ModerationSession> {
         this.host.killEntity(target.pid);
         this.host.systemNotice(actor, `Killed ${target.name}.`);
       })
-      .catch((err) => console.error('failed to audit in-game kill:', err));
+      .catch((err) => logger.error({ err }, 'failed to audit in-game kill'));
   }
 
   private mute(actor: TSession, name: string | null, minutes: number | null, reason: string): void {
@@ -144,7 +186,7 @@ export class ModerationService<TSession extends ModerationSession> {
         this.host.muteLive(target.accountId, expiresAt, reason);
         this.host.systemNotice(actor, `Muted ${target.name} for ${formatDuration(minutes * 60)}.`);
       })
-      .catch((err) => console.error('failed to mute in-game:', err));
+      .catch((err) => logger.error({ err }, 'failed to mute in-game'));
   }
 
   private ban(actor: TSession, name: string | null, reason: string): void {
@@ -156,7 +198,7 @@ export class ModerationService<TSession extends ModerationSession> {
         this.host.disconnect(target.accountId, BAN_MESSAGE);
         this.host.systemNotice(actor, `Banned ${target.name}.`);
       })
-      .catch((err) => console.error('failed to ban in-game:', err));
+      .catch((err) => logger.error({ err }, 'failed to ban in-game'));
   }
 
   private suspend(
@@ -181,7 +223,7 @@ export class ModerationService<TSession extends ModerationSession> {
           `Suspended ${target.name} for ${formatDuration(minutes * 60)}.`,
         );
       })
-      .catch((err) => console.error('failed to suspend in-game:', err));
+      .catch((err) => logger.error({ err }, 'failed to suspend in-game'));
   }
 
   private forceRename(actor: TSession, name: string | null, reason: string): void {
@@ -197,7 +239,7 @@ export class ModerationService<TSession extends ModerationSession> {
         this.host.disconnect(target.accountId, RENAME_MESSAGE);
         this.host.systemNotice(actor, `Required ${target.name} to rename.`);
       })
-      .catch((err) => console.error('failed to force-rename in-game:', err));
+      .catch((err) => logger.error({ err }, 'failed to force-rename in-game'));
   }
 
   private spectate(actor: TSession, name: string | null): void {
@@ -215,6 +257,74 @@ export class ModerationService<TSession extends ModerationSession> {
       return;
     }
     this.host.enterSpectate(actor, target);
+  }
+
+  // Jailing always carries an explicit sentence: /jail "<name>" <minutes>
+  // [reason]. The bare /jail is the moderator's own visit; there is no
+  // indefinite form (early release is /unjail).
+  private jail(
+    actor: TSession,
+    name: string | null,
+    minutes: number | null,
+    reason: string | null,
+    malformed: boolean,
+  ): void {
+    if (malformed) {
+      this.host.notice(actor, 'Usage: /jail ["<name>" <minutes> [reason]]');
+      return;
+    }
+    if (!name) {
+      this.host.enterJailVisit(actor);
+      return;
+    }
+    if (minutes === null) return; // unreachable: the parser rejects a name without minutes
+    const target = this.resolveNamedTarget(actor, name);
+    if (!target) return;
+    if (this.host.isJailed(target)) {
+      this.host.notice(actor, `${target.name} is already jailed.`);
+      return;
+    }
+    void this.audit
+      .recordAction({
+        action: 'jail',
+        accountId: target.accountId,
+        adminAccountId: actor.accountId,
+        reason: `${reason ?? JAIL_REASON} (${formatDuration(minutes * 60)})`,
+      })
+      .then(() => {
+        this.host.jail(actor, target, minutes);
+        this.host.systemNotice(actor, `Jailed ${target.name} for ${formatDuration(minutes * 60)}.`);
+      })
+      .catch((err) => logger.error({ err }, 'failed to audit in-game jail'));
+  }
+
+  private unjail(actor: TSession, name: string | null, malformed: boolean): void {
+    if (malformed) {
+      this.host.notice(actor, 'Usage: /unjail ["<name>"]');
+      return;
+    }
+    if (!name) {
+      this.host.exitJailVisit(actor);
+      return;
+    }
+    const target = this.resolveNamedTarget(actor, name);
+    if (!target) return;
+    if (!this.host.isJailed(target)) {
+      this.host.notice(actor, `${target.name} is not jailed.`);
+      return;
+    }
+    void this.audit
+      .recordAction({
+        action: 'unjail',
+        accountId: target.accountId,
+        adminAccountId: actor.accountId,
+        reason: UNJAIL_REASON,
+      })
+      .then(() => {
+        this.host.unjail(actor, target);
+        this.host.systemNotice(actor, `Released ${target.name} from jail.`);
+      })
+      .catch((err) => logger.error({ err }, 'failed to audit in-game unjail'));
   }
 
   private resolveNamedTarget(actor: TSession, name: string | null): TSession | null {

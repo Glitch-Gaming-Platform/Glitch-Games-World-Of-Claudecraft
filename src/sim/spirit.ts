@@ -34,7 +34,7 @@ import {
 } from './resurrection';
 import type { PlayerMeta } from './sim';
 import type { SimContext } from './sim_context';
-import { dist2d, type Entity, type Vec3 } from './types';
+import { dist2d, type Entity, emptyMoveInput, type Vec3 } from './types';
 
 // --- tuning -----------------------------------------------------------------
 // A released spirit runs faster than the living, ignoring slows (a ghost cannot be
@@ -102,17 +102,22 @@ export function releasePlayerSpirit(ctx: SimContext, pid?: number): void {
   }
   // Mark where the body lies, then send the spirit to the graveyard.
   p.corpsePos = { x: p.pos.x, y: p.pos.y, z: p.pos.z };
+  p.corpseInstanceId = ctx.instanceClaimIdAt(p.pos);
   p.ghost = true; // p.dead stays true
   const gy = ghostGraveyard(p);
   p.pos = ctx.groundPos(gy.x, gy.z);
   p.prevPos = { ...p.pos };
   ctx.rebucket(p);
   p.facing = 0;
+  // Whatever movement keys were held at the moment of death must not carry over: the
+  // ghost is teleported to the graveyard and should sit still until the player actually
+  // presses a key again, not keep walking in the last held direction.
+  Object.assign(meta.moveInput, emptyMoveInput());
   // The Keeper's Toll (Resurrection Sickness) persists through death and release: it
   // cannot be shed by dying. Every other aura clears when the spirit is released.
   p.auras = aurasSurvivingDeath(p.auras);
   p.ccDr.clear();
-  recalcPlayerStats(p, meta.cls, meta.equipment, ctx.playerMods(meta));
+  recalcPlayerStats(p, meta.cls, meta.equipment, ctx.playerMods(meta), meta.equipmentInstance);
   // A ghost shows a full (greyed) bar even though it is still `dead`. recalc forces
   // hp to 0 while dead, so set the display pools afterward.
   p.hp = p.maxHp;
@@ -121,6 +126,9 @@ export function releasePlayerSpirit(ctx: SimContext, pid?: number): void {
   p.autoAttack = false;
   p.queuedOnSwing = null;
   delete p.queuedOnSwingFree;
+  delete p.queuedOnSwingCostMultiplier;
+  p.queuedCastAbility = null;
+  p.queuedCastAim = null;
   p.combatTimer = 99;
   p.inCombat = false;
   // No event: the client transitions to the ghost UI from the snapshot's ghost flag.
@@ -141,16 +149,17 @@ export function resurrectAtCorpse(ctx: SimContext, pid?: number): void {
 }
 
 // Resurrect at the Spirit Healer: instant, in place, but with Resurrection Sickness.
-export function resurrectAtSpiritHealer(ctx: SimContext, pid?: number): void {
+export function resurrectAtSpiritHealer(ctx: SimContext, pid?: number): boolean {
   const r = ctx.resolve(pid);
-  if (!r) return;
+  if (!r) return false;
   const { meta, e: p } = r;
-  if (!p.dead || !p.ghost) return;
-  if (!spiritHealerInRange(ctx, p)) return;
+  if (!p.dead || !p.ghost) return false;
+  if (!spiritHealerInRange(ctx, p)) return false;
   // The Spirit Healer always inflicts Resurrection Sickness and returns you at only
   // RES_HEALER_HP_FRACTION of your pools (the corpse run is the penalty-free choice).
   reviveAt(ctx, meta, p, p.pos, RES_HEALER_HP_FRACTION, true);
   ctx.emit({ type: 'respawn', pid: meta.entityId });
+  return true;
 }
 
 // Resurrect a ghost that ran its spirit back and re-entered its instance: penalty-free,
@@ -165,6 +174,14 @@ export function resurrectOnInstanceReentry(
 ): void {
   reviveAt(ctx, meta, p, pos, RES_HP_FRACTION, false);
   ctx.emit({ type: 'respawn', pid: meta.entityId });
+}
+
+export function revivePlayerAt(ctx: SimContext, pid: number, pos: Vec3, hpFrac = 1): void {
+  const r = ctx.resolve(pid);
+  if (!r) return;
+  const wasDead = r.e.dead || r.e.ghost;
+  reviveAt(ctx, r.meta, r.e, pos, hpFrac, false);
+  if (wasDead) ctx.emit({ type: 'respawn', pid: r.meta.entityId });
 }
 
 // Whether a Spirit Healer NPC stands within reach of the spirit.
@@ -189,20 +206,27 @@ function reviveAt(
   p.dead = false;
   p.ghost = false;
   p.corpsePos = null;
+  p.corpseInstanceId = null;
   p.pos = ctx.groundPos(pos.x, pos.z);
   p.prevPos = { ...p.pos };
   ctx.rebucket(p);
   p.facing = 0;
+  // As with the release above: a held movement key at the moment the revive lands must
+  // not carry over, or the freshly-revived body immediately walks off in whatever
+  // direction was last held (this is what made revived players drift with no input).
+  Object.assign(meta.moveInput, emptyMoveInput());
   // Keep The Keeper's Toll across the revive (it persists through death); a healer
   // resurrection refreshes it to full duration via applyResurrectionSickness below.
   p.auras = aurasSurvivingDeath(p.auras);
   p.ccDr.clear();
-  recalcPlayerStats(p, meta.cls, meta.equipment, ctx.playerMods(meta));
+  recalcPlayerStats(p, meta.cls, meta.equipment, ctx.playerMods(meta), meta.equipmentInstance);
   p.hp = Math.max(1, Math.round(p.maxHp * hpFrac));
   p.resource = p.resourceType === 'mana' ? Math.round(p.maxResource * hpFrac) : 0;
   p.targetId = null;
   p.autoAttack = false;
   p.queuedOnSwing = null;
+  p.queuedCastAbility = null;
+  p.queuedCastAim = null;
   p.combatTimer = 99;
   p.inCombat = false;
   // Apply sickness last: applyAura -> recalcPlayerStats preserves the hp/resource

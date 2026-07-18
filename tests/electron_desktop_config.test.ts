@@ -5,6 +5,7 @@ import {
   resolveDesktopOrigins,
   resolveDistribution,
   updaterAllowed,
+  walletConnectionSupported,
 } from '../electron/desktop_config.cjs';
 
 const steamStamp = { wocDesktop: { distribution: 'steam' } };
@@ -74,6 +75,14 @@ describe('updaterAllowed (the Steam / dev double gate)', () => {
   it('never allows an unpackaged checkout, even forced to website', () => {
     expect(updaterAllowed({ distribution: 'website', isPackaged: false })).toBe(false);
     expect(updaterAllowed({ distribution: 'website', isPackaged: undefined })).toBe(false);
+  });
+});
+
+describe('walletConnectionSupported', () => {
+  it('allows the website shell and keeps Steam fail-closed', () => {
+    expect(walletConnectionSupported({ distribution: 'website' })).toBe(true);
+    expect(walletConnectionSupported({ distribution: 'steam' })).toBe(false);
+    expect(walletConnectionSupported({ distribution: 'unknown' })).toBe(false);
   });
 });
 
@@ -195,6 +204,7 @@ describe('resolveDesktopConfig', () => {
       distribution: 'website',
       updaterEnabled: true,
       crashSubmitUrl: '',
+      updateChannel: 'latest',
       ...defaultOrigins,
     });
   });
@@ -205,6 +215,7 @@ describe('resolveDesktopConfig', () => {
       distribution: 'steam',
       updaterEnabled: false,
       crashSubmitUrl: '',
+      updateChannel: 'latest',
       ...defaultOrigins,
     });
   });
@@ -215,7 +226,35 @@ describe('resolveDesktopConfig', () => {
       distribution: 'website',
       updaterEnabled: false,
       crashSubmitUrl: '',
+      updateChannel: 'latest',
       ...defaultOrigins,
     });
+  });
+
+  it('derives the update channel from the baked origin: non-production reads the dev feed', () => {
+    const dev = resolveDesktopConfig({
+      packagedMetadata: {
+        wocDesktop: { distribution: 'website', apiOrigin: 'https://dev.worldofclaudecraft.com' },
+      },
+      isPackaged: true,
+    });
+    expect(dev.updateChannel).toBe('dev');
+    expect(dev.updaterEnabled).toBe(true);
+    const smoke = resolveDesktopConfig({
+      packagedMetadata: {
+        wocDesktop: { distribution: 'website', apiOrigin: 'http://localhost:8787' },
+      },
+      isPackaged: true,
+    });
+    expect(smoke.updateChannel).toBe('dev');
+    // No env hatch: a packaged build's channel follows its baked origin only.
+    const forced = resolveDesktopConfig({
+      packagedMetadata: {
+        wocDesktop: { distribution: 'website', apiOrigin: 'https://dev.worldofclaudecraft.com' },
+      },
+      env: { VITE_DESKTOP_API_ORIGIN: 'https://worldofclaudecraft.com' },
+      isPackaged: true,
+    });
+    expect(forced.updateChannel).toBe('dev');
   });
 });

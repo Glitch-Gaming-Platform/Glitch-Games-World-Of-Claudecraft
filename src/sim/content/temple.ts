@@ -57,6 +57,7 @@ export const TEMPLE_MOBS: Record<string, MobTemplate> = {
     ],
     scale: 1.05,
     color: 0x8fb6c4,
+    componentTags: ['gills', 'hide'],
   },
   drowned_votary: {
     id: 'drowned_votary',
@@ -103,6 +104,7 @@ export const TEMPLE_MOBS: Record<string, MobTemplate> = {
     ],
     scale: 1.2,
     color: 0xbcd2e6,
+    componentTags: ['hide', 'claw', 'horn'],
   },
 };
 
@@ -717,9 +719,9 @@ export const TEMPLE_ITEMS: Record<string, ItemDef> = {
 // ---------------------------------------------------------------------------
 
 const TEMPLE_SPAWN_LIST: DungeonSpawn[] = [
-  // antechamber
-  { mobId: 'drowned_templeguard', x: -3, z: 14 },
-  { mobId: 'drowned_templeguard', x: 3, z: 15 },
+  // antechamber (front pair pushed to z 20+ so they sit outside aggro range of the entry)
+  { mobId: 'drowned_templeguard', x: -3, z: 20 },
+  { mobId: 'drowned_templeguard', x: 3, z: 21 },
   { mobId: 'drowned_templeguard', x: -9, z: 30 },
   { mobId: 'pale_choir_acolyte', x: -5, z: 31 },
   { mobId: 'glimmerscale_lurker', x: 9, z: 44 },
@@ -745,7 +747,7 @@ export const TEMPLE_DUNGEON_DEFS: Record<string, DungeonDef> = {
     name: 'The Drowned Temple',
     index: 3, // instance origin x = 900 + 3*600 = 2700 (clear of the arena band)
     doorPos: { ...MOONGATE_POS }, // the moongate on the Glimmermere shore
-    entry: { x: 0, z: 4 },
+    entry: { x: 0, z: -2 }, // clear-of-aggro arrival (see dungeon_entry_clearance test)
     exitOffset: { x: 0, z: -6 },
     spawns: TEMPLE_SPAWN_LIST,
     interior: 'temple',

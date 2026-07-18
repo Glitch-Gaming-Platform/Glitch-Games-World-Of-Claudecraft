@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { questTrackerView, type TrackedQuest } from '../src/ui/quest_tracker';
+import { questTrackerView, type TrackedQuest } from '../src/ui/hud/quest/quest_tracker';
 
 // Titles/labels are already resolved before the tracker receives them.
 const QUESTS: TrackedQuest[] = [
@@ -8,7 +8,7 @@ const QUESTS: TrackedQuest[] = [
     number: 1,
     title: 'Wolves at the Door',
     complete: false,
-    objectives: [{ label: 'Forest Wolf slain', current: 0, total: 8 }],
+    objectives: [{ label: 'Forest Wolf slain', current: 0, total: 3 }],
   },
   {
     id: 'webwood',
@@ -42,7 +42,7 @@ describe('questTrackerView', () => {
     expect(v.quests).toHaveLength(2);
     // the acceptance-order number rides through (matches the map badges)
     expect(v.quests.map((q) => q.number)).toEqual([1, 2]);
-    expect(v.quests[0].objectives[0].done).toBe(false); // 0/8
+    expect(v.quests[0].objectives[0].done).toBe(false); // 0/3
     expect(v.quests[1].complete).toBe(true);
     expect(v.quests[1].objectives.map((o) => o.done)).toEqual([true, true]); // 6/6, 4/4
   });

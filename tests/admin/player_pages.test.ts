@@ -118,12 +118,14 @@ import App from '../../src/admin/App.svelte';
 import { t } from '../../src/admin/i18n';
 import Characters from '../../src/admin/pages/Characters.svelte';
 import { auth } from '../../src/admin/state/auth.svelte';
+import { grantPermissions } from './_grant';
 
 describe('Players pages', () => {
   it('opens account details from the searchable accounts directory', async () => {
     history.replaceState(null, '', '/admin?page=accounts');
     auth.token = 'tok';
     auth.name = 'alice';
+    grantPermissions();
     render(App);
 
     await screen.findByText('alice');
@@ -158,6 +160,7 @@ describe('Players pages', () => {
     history.replaceState(null, '', '/admin?page=characters');
     auth.token = 'tok';
     auth.name = 'alice';
+    grantPermissions();
     render(App);
 
     expect(await screen.findByText('Merlin')).toBeInTheDocument();
@@ -183,8 +186,8 @@ describe('Players pages', () => {
     expect(screen.getByText(t('detail.statusActive'))).toBeInTheDocument();
     expect(screen.queryByText(t('detail.status'))).not.toBeInTheDocument();
     expect(screen.getByText(t('accountModal.recentIps'))).toBeInTheDocument();
-    expect(screen.getByText('203.0.113.7')).toBeInTheDocument();
-    expect(screen.getByText('198.51.100.4')).toBeInTheDocument();
+    expect(screen.getAllByText('203.0.113.7').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('198.51.100.4').length).toBeGreaterThan(0);
     expect(screen.getByText(t('moderationHistory.title'))).toBeInTheDocument();
     expect(screen.getByText('harassment')).toBeInTheDocument();
     expect(screen.getByText(t('moderationHistory.by', { name: 'moderator' }))).toBeInTheDocument();

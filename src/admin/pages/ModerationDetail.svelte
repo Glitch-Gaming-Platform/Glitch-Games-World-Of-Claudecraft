@@ -13,6 +13,7 @@
   import AccountDetail from './AccountDetail.svelte';
   import AccountModerationActions from '../components/AccountModerationActions.svelte';
   import ChatModeration from '../components/ChatModeration.svelte';
+  import DailyRewardsModerationControls from '../components/DailyRewardsModerationControls.svelte';
   import IpBlockSection from '../components/IpBlockSection.svelte';
   import ModerationActionPrompt from '../components/ModerationActionPrompt.svelte';
 
@@ -115,20 +116,25 @@
 
     <AccountDetail detail={detail.account} onChanged={refetch} />
 
-    <AccountModerationActions target={detail.account} onSubmit={submitPending} />
+    {#if auth.can('moderation.act')}
+      <AccountModerationActions target={detail.account} onSubmit={submitPending} />
+      <DailyRewardsModerationControls target={detail.account} onSubmit={submitPending} />
 
-    <ChatModeration
-      account={detail.account}
-      chat={detail.chat}
-      onSubmit={submitPending}
-      onReset={() => direct(`/admin/api/moderation/accounts/${accountId}/reset-strikes`)}
-    />
+      <ChatModeration
+        account={detail.account}
+        chat={detail.chat}
+        onSubmit={submitPending}
+        onReset={() => direct(`/admin/api/moderation/accounts/${accountId}/reset-strikes`)}
+      />
+    {/if}
 
-    <IpBlockSection
-      detail={detail}
-      onBan={submitPending}
-      onUnblock={(ip) => void direct('/admin/api/blocked-ips/delete', { ip })}
-    />
+    {#if auth.can('ipblocks.manage')}
+      <IpBlockSection
+        detail={detail}
+        onBan={submitPending}
+        onUnblock={(ip) => void direct('/admin/api/blocked-ips/delete', { ip })}
+      />
+    {/if}
 
     <h4>{t('report.openReports')}</h4>
     {#if detail.reports.length === 0}
@@ -143,22 +149,24 @@
             <div><b>{t('report.reason')}</b> {reasonLabel(r.reason)}</div>
           </div>
           <div class="mod-details">{r.details || t('report.noDetails')}</div>
-          <div class="mod-actions">
-            <button onclick={() => (selectedReportAction = { kind: 'ignore', report: r })}>
-              {t('report.ignore')}
-            </button>
-            {#if r.reportedCharacterId}
-              <button
-                onclick={() =>
-                  (selectedReportAction = {
-                    kind: 'force-rename',
-                    report: r,
-                  })}
-              >
-                {t('report.forceNameChange')}
+          {#if auth.can('moderation.act')}
+            <div class="mod-actions">
+              <button onclick={() => (selectedReportAction = { kind: 'ignore', report: r })}>
+                {t('report.ignore')}
               </button>
-            {/if}
-          </div>
+              {#if r.reportedCharacterId}
+                <button
+                  onclick={() =>
+                    (selectedReportAction = {
+                      kind: 'force-rename',
+                      report: r,
+                    })}
+                >
+                  {t('report.forceNameChange')}
+                </button>
+              {/if}
+            </div>
+          {/if}
           {#if selectedReportAction?.report.id === r.id}
             {@const action = selectedReportAction}
             {#key `${r.id}:${action.kind}`}

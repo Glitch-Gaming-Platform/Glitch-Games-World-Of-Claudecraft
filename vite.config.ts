@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
@@ -71,8 +71,10 @@ const appBuildId =
 const desktopApiOrigin = env(['VITE_DESKTOP_API_ORIGIN']);
 const isDesktopDevBuild = env(['VITE_DESKTOP_APP']) === '1';
 const apiProxyTarget =
-  isDesktopDevBuild && desktopApiOrigin ? desktopApiOrigin : 'http://127.0.0.1:8787';
+  env(['WOC_DEV_API_TARGET']) ??
+  (isDesktopDevBuild && desktopApiOrigin ? desktopApiOrigin : 'http://127.0.0.1:8787');
 const wsProxyTarget = apiProxyTarget.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
+const isGlitchBuild = process.env.VITE_GLITCH_ENABLED === '1';
 
 // Pretty-URL aliases for standalone static HTML pages. Mirrors the production
 // server rewrite in server/main.ts so these paths resolve in dev and preview too.
@@ -85,6 +87,8 @@ const STATIC_PAGE_ALIASES = new Map([
   ['/social-media-links/', '/links.html'],
   ['/play', '/play.html'],
   ['/play/', '/play.html'],
+  ['/wallet-handoff', '/wallet-handoff.html'],
+  ['/wallet-handoff/', '/wallet-handoff.html'],
   ['/privacy', '/privacy.html'],
   ['/privacy/', '/privacy.html'],
   ['/terms', '/terms.html'],
@@ -252,9 +256,9 @@ function musicEditorSavePlugin() {
             for (const name of names) {
               const t = overrides[name];
               lines.push(
-                '  ' + name + ': {',
-                '    bpm: ' + t.bpm + ',',
-                '    bars: ' + t.bars + ',',
+                `  ${name}: {`,
+                `    bpm: ${t.bpm},`,
+                `    bars: ${t.bars},`,
                 '    events: [',
               );
               const sorted = [...t.events].sort((a, b) => a.beat - b.beat);
@@ -293,8 +297,88 @@ function musicEditorSavePlugin() {
   };
 }
 
+const GLITCH_ROOT_ASSET_PATTERN =
+  '(?:(?:audio|env|guide-stills|media|models|textures|ui|vfx)/[^"\\\')\\s]+|(?:apple-touch-icon|favicon(?:-[0-9]+x[0-9]+)?|home-bg|icon-[0-9]+|loading-screen|manifest|robots|sitemap|llms|woc[-_][^/"\\\')\\s]+|worldofclaudecraft-logo|World-of-ClaudeCraft-Whitepaper-v1\\.0)\\.[A-Za-z0-9]+)';
+const GLITCH_HTML_ROOT_ASSET_RE = new RegExp(
+  `\\b(href|src|poster|data-trailer-src)=(["'])/(${GLITCH_ROOT_ASSET_PATTERN})([^"']*)\\2`,
+  'g',
+);
+const GLITCH_CSS_ROOT_ASSET_RE = new RegExp(
+  `url\\((["']?)/(${GLITCH_ROOT_ASSET_PATTERN})([^"'\\)]*)\\1\\)`,
+  'g',
+);
+const GLITCH_MANIFEST_ROOT_ASSET_RE = new RegExp(
+  `("src"\\s*:\\s*")/(${GLITCH_ROOT_ASSET_PATTERN})([^"]*)"`,
+  'g',
+);
+
+function rewriteGlitchHtmlAssets(source: string): string {
+  return source
+    .replace(
+      GLITCH_HTML_ROOT_ASSET_RE,
+      (_match, attr: string, quote: string, assetPath: string, suffix: string) =>
+        `${attr}=${quote}./${assetPath}${suffix}${quote}`,
+    )
+    .replace(
+      GLITCH_CSS_ROOT_ASSET_RE,
+      (_match, quote: string, assetPath: string, suffix: string) =>
+        `url(${quote}./${assetPath}${suffix}${quote})`,
+    );
+}
+
+function rewriteGlitchCssAssets(source: string): string {
+  return source.replace(
+    GLITCH_CSS_ROOT_ASSET_RE,
+    (_match, quote: string, assetPath: string, suffix: string) =>
+      `url(${quote}../${assetPath}${suffix}${quote})`,
+  );
+}
+
+function rewriteGlitchManifestAssets(source: string): string {
+  return source.replace(
+    GLITCH_MANIFEST_ROOT_ASSET_RE,
+    (_match, prefix: string, assetPath: string, suffix: string) =>
+      `${prefix}./${assetPath}${suffix}"`,
+  );
+}
+
+function walkFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const file = path.join(dir, name);
+    const stat = statSync(file);
+    if (stat.isDirectory()) out.push(...walkFiles(file));
+    else out.push(file);
+  }
+  return out;
+}
+
+function glitchStaticAssetPlugin() {
+  return {
+    name: 'woc-glitch-static-asset-urls',
+    apply: 'build' as const,
+    closeBundle() {
+      if (!isGlitchBuild) return;
+      const outDir = path.resolve(root, 'dist');
+      if (!existsSync(outDir)) return;
+      for (const file of walkFiles(outDir)) {
+        const ext = path.extname(file);
+        if (ext !== '.html' && ext !== '.css' && ext !== '.webmanifest') continue;
+        const original = readFileSync(file, 'utf8');
+        const next =
+          ext === '.css'
+            ? rewriteGlitchCssAssets(original)
+            : ext === '.webmanifest'
+              ? rewriteGlitchManifestAssets(original)
+              : rewriteGlitchHtmlAssets(original);
+        if (next !== original) writeFileSync(file, next);
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  base: '/',
+  base: isGlitchBuild ? './' : '/',
   // The Svelte plugin only transforms the standalone admin entry. The testing
   // plugin is scoped to Vitest so it cannot affect production client builds.
   plugins: [
@@ -302,6 +386,7 @@ export default defineConfig({
     ...(process.env.VITEST ? [svelteTesting()] : []),
     staticPageAliasPlugin(),
     i18nModulepreloadPlugin(),
+    glitchStaticAssetPlugin(),
     musicEditorSavePlugin(),
   ],
   resolve: { alias: { '#bot-detector': botDetectorImpl } },
@@ -345,23 +430,51 @@ export default defineConfig({
         play: fileURLToPath(new URL('play.html', import.meta.url)),
         guide: fileURLToPath(new URL('guide.html', import.meta.url)),
         editor: fileURLToPath(new URL('editor.html', import.meta.url)),
+        walletHandoff: fileURLToPath(new URL('wallet-handoff.html', import.meta.url)),
+      },
+      output: {
+        // three.js almost never changes between our releases and is the single
+        // heaviest dependency in the game/editor bundles; splitting it into its
+        // own chunk lets the browser fetch it in parallel with app code and
+        // reuse the browser cache across app-only redeploys (its content hash
+        // stays stable unless the three version itself bumps).
+        manualChunks(id: string): string | undefined {
+          if (id.includes('node_modules/three/')) return 'vendor-three';
+          return undefined;
+        },
       },
     },
   },
   test: {
+    // server/db.ts (and every module importing it) requires DATABASE_URL at module
+    // load. Locally db.ts fills it from .env; a CI checkout has no .env, so default
+    // a dummy here to keep the suite runnable in plain Node. Unit tests never open
+    // a connection (the pg Pool connects only on first query, and db-touching tests
+    // use FakeDb/mocks), and a real DATABASE_URL from the shell still wins.
+    env: {
+      DATABASE_URL:
+        process.env.DATABASE_URL ?? 'postgres://vitest:vitest@127.0.0.1:5433/wocc_vitest_dummy',
+    },
+    globalSetup: ['./tests/global_setup.ts'],
     // Two kinds of exclusion, kept together:
-    // - .codex/.venv are local-only worktree/venv pollution a clean CI checkout never has;
-    //   excluding them keeps the local gate mirroring CI (otherwise stale .codex worktree
-    //   copies of test files run and falsely fail).
+    // - agent-runtime directories may contain local worktree copies, and their tracked
+    //   config or instruction files are not product test sources. Excluding them keeps a
+    //   stale local worktree from duplicating tests. .venv is local Python tooling.
     // - the opt-in browser suite (vitest.browser.config.ts, npm run test:browser) must NOT
     //   leak into a bare `vitest run`: excluding its files keeps the default Node run from
     //   importing the Playwright provider or launching a browser. Cross-engine CI is P17b.
+    // - tmp/ is gitignored scratch (screenshot tours, the new:endpoint golden test's emitted
+    //   *.test.ts under a temp root); excluding it keeps a crashed golden run's orphan emitted
+    //   test out of a bare `vitest run`. The golden test runs its emitted test through a child
+    //   vitest with an explicit --config override so this exclude does not block it.
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
       '**/.claude/**',
       '**/.codex/**',
+      '**/.agents/**',
       '**/.venv/**',
+      'tmp/**',
       'tests/browser/**',
       '**/*.browser.test.ts',
     ],

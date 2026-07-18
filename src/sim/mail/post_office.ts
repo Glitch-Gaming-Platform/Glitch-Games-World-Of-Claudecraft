@@ -16,7 +16,12 @@
 // `src/sim`-pure: no DOM/Three/render-ui-game-net imports, no Math.random/
 // Date.now (enforced by tests/architecture.test.ts). The post draws NO rng.
 
-import { type LetterDef, QUEST_LETTERS, WELCOME_LETTER } from '../content/letters';
+import {
+  HEROIC_MARK_LETTER,
+  type LetterDef,
+  QUEST_LETTERS,
+  WELCOME_LETTER,
+} from '../content/letters';
 import { ITEMS } from '../data';
 import type { PlayerMeta } from '../sim';
 import type { SimContext } from '../sim_context';
@@ -312,6 +317,10 @@ export class PostOffice {
       const def = ITEMS[s.itemId];
       const count = Math.floor(s.count);
       if (!def || !Number.isFinite(count) || count < 1) return;
+      if (def.soulbound) {
+        this.result(meta.entityId, 'noMailSoulbound');
+        return;
+      }
       if (def.kind === 'quest' || def.noMarketList) {
         this.result(meta.entityId, 'noMailQuestItems');
         return;
@@ -355,6 +364,8 @@ export class PostOffice {
       delaySeconds: MAIL_DELIVERY_SECONDS,
     });
     this.result(meta.entityId, 'sent', { name: recipient.name, value: MAIL_POSTAGE });
+    // Only a letter carrying coin or parcels counts; a bare note does not.
+    if (coin > 0 || items.length > 0) this.ctx.bumpDeedStat(meta, 'mailAttachmentsSent', 1);
   }
 
   // Take everything attached to one letter: coin into the purse, parcels into
@@ -464,6 +475,21 @@ export class PostOffice {
   // The one-time service letter; the caller flips meta.mailWelcomed.
   sendWelcome(meta: PlayerMeta): void {
     this.sendLetter(this.mailKeyFor(meta), meta.name, WELCOME_LETTER, 'system');
+  }
+
+  // Heroic Marks reward hook (awardHeroicMarks): posts a participant's marks when
+  // they took the daily lockout but were not at the corpse to loot them (a distant
+  // healer, a fallen raider). The letter's attachment carries the exact mark count
+  // for this kill. No postage, no proximity gate: the raid already earned it.
+  mailHeroicMarks(pid: number, itemId: string, count: number): void {
+    const meta = this.ctx.players.get(pid);
+    if (!meta || count <= 0) return;
+    this.sendLetter(
+      this.mailKeyFor(meta),
+      meta.name,
+      { ...HEROIC_MARK_LETTER, items: [{ itemId, count }] },
+      'system',
+    );
   }
 
   // Quest turn-in hook (turnInQuestCore): quests with an authored letter have
@@ -588,6 +614,17 @@ export class PostOffice {
 
   loadMail(save: MailSave | null | undefined): void {
     if (!save) return;
+    const returnedParcels: {
+      recipientKey: string;
+      recipientName: string;
+      senderName: string;
+      kind: MailKind;
+      subject: string;
+      body: string;
+      copper: number;
+      items: InvSlot[];
+      delaySeconds: number;
+    }[] = [];
     for (const m of save.mail ?? []) {
       if (!m || typeof m.recipientKey !== 'string') continue;
       // Keep letters whose attached item id is no longer in ITEMS (a content
@@ -595,23 +632,57 @@ export class PostOffice {
       const items = (m.items ?? [])
         .filter((s) => s && typeof s.itemId === 'string')
         .map((s) => ({ itemId: s.itemId, count: Math.max(1, s.count | 0) }));
+      const kind: MailKind = m.kind === 'player' || m.kind === 'npc' ? m.kind : 'system';
+      const recipientName = String(m.recipientName ?? m.recipientKey);
+      const senderName = String(m.senderName ?? '?');
+      const subject = String(m.subject ?? '');
+      const body = String(m.body ?? '');
+      const retainedItems: InvSlot[] = [];
+      const returnedItems: InvSlot[] = [];
+      for (const item of items) {
+        if (kind === 'player' && ITEMS[item.itemId]?.soulbound) returnedItems.push(item);
+        else retainedItems.push(item);
+      }
+      // Migration for player parcels sent before an item became soulbound. The
+      // persisted model has no stable sender key, so return only the newly bound
+      // stacks to the senderName-keyed mailbox. Mark the return as system mail so
+      // a serialize/load round trip never returns it again. Ordinary items and
+      // attached coin remain on the original letter.
+      if (returnedItems.length > 0) {
+        returnedParcels.push({
+          recipientKey: senderName,
+          recipientName: senderName,
+          senderName: recipientName,
+          kind: 'system',
+          subject,
+          body,
+          copper: 0,
+          items: returnedItems,
+          delaySeconds: 0,
+        });
+      }
       const deliverIn = Number.isFinite(m.deliverIn) ? Math.max(0, m.deliverIn) : 0;
+      const copper = Math.max(0, Math.floor(m.copper) || 0);
+      const persistedExpiresAt =
+        m.secondsLeft === -1 || !Number.isFinite(m.secondsLeft)
+          ? Infinity
+          : this.ctx.time + Math.max(0, m.secondsLeft);
       this.mail.push({
         id: m.id,
         recipientKey: m.recipientKey,
-        recipientName: String(m.recipientName ?? m.recipientKey),
-        senderName: String(m.senderName ?? '?'),
-        kind: m.kind === 'player' || m.kind === 'npc' ? m.kind : 'system',
+        recipientName,
+        senderName,
+        kind,
         letterId: typeof m.letterId === 'string' ? m.letterId : undefined,
-        subject: String(m.subject ?? ''),
-        body: String(m.body ?? ''),
-        copper: Math.max(0, Math.floor(m.copper) || 0),
-        items,
+        subject,
+        body,
+        copper,
+        items: retainedItems,
         deliverAt: this.ctx.time + deliverIn,
         expiresAt:
-          m.secondsLeft === -1 || !Number.isFinite(m.secondsLeft)
-            ? Infinity
-            : this.ctx.time + Math.max(0, m.secondsLeft),
+          returnedItems.length > 0 && retainedItems.length === 0 && copper <= 0
+            ? Math.min(persistedExpiresAt, this.ctx.time + MAIL_EXPIRY_SECONDS)
+            : persistedExpiresAt,
         read: m.read === true,
         // Already-delivered letters never re-toast after a restart.
         announced: deliverIn <= 0,
@@ -619,6 +690,7 @@ export class PostOffice {
     }
     const maxId = this.mail.reduce((mx, m) => Math.max(mx, m.id + 1), 1);
     this.nextMailId = Math.max(this.nextMailId, save.nextMailId ?? 1, maxId);
+    for (const parcel of returnedParcels) this.book(parcel);
     // The unread index is derived state, never persisted: rebuild it from the
     // freshly loaded book.
     this.rebuildUnreadIndex();

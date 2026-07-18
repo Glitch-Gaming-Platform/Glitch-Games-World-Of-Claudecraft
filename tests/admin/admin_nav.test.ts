@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import './_setup';
 import { render, screen } from '@testing-library/svelte';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import AdminNav from '../../src/admin/components/AdminNav.svelte';
 import { t } from '../../src/admin/i18n';
+import { grantPermissions } from './_grant';
+
+beforeEach(() => {
+  grantPermissions();
+});
 
 describe('AdminNav', () => {
   it('groups moderation sub-pages and marks the current page', () => {
@@ -18,6 +23,10 @@ describe('AdminNav', () => {
     expect(screen.getByRole('link', { name: t('nav.reports') })).toHaveAttribute(
       'href',
       expect.stringContaining('page=moderation'),
+    );
+    expect(screen.getByRole('link', { name: t('nav.history') })).toHaveAttribute(
+      'href',
+      expect.stringContaining('page=moderation-history'),
     );
     expect(screen.getByRole('link', { name: t('nav.blockedIps') })).toHaveAttribute(
       'aria-current',
@@ -62,5 +71,42 @@ describe('AdminNav', () => {
       'aria-current',
       'page',
     );
+  });
+
+  it('shows the staff page to a staff manager', () => {
+    render(AdminNav, {
+      route: { page: 'staff' },
+      onSelect: () => {},
+      onClose: () => {},
+    });
+
+    expect(screen.getByRole('link', { name: t('nav.staff') })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it('filters sections and items down to the granted permissions', () => {
+    grantPermissions(['moderation.read', 'accounts.read']);
+    render(AdminNav, {
+      route: { page: 'moderation' },
+      onSelect: () => {},
+      onClose: () => {},
+    });
+
+    // Moderation section: reports/shared-ips/blocked-ips/chat-filter all visible.
+    expect(screen.getByRole('link', { name: t('nav.reports') })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: t('nav.history') })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: t('nav.blockedIps') })).toBeInTheDocument();
+    // Accounts and characters both require accounts.read, so both are visible.
+    expect(screen.getByRole('link', { name: t('nav.accounts') })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: t('nav.characters') })).toBeInTheDocument();
+    // Whole sections without a granted permission disappear: overview needs
+    // analytics.read, and Operations/Usage needs ops_usage.read, neither granted.
+    expect(screen.queryByRole('link', { name: t('nav.usage') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: t('nav.overview') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: t('nav.botDetector') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: t('nav.bugReports') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: t('nav.staff') })).not.toBeInTheDocument();
   });
 });

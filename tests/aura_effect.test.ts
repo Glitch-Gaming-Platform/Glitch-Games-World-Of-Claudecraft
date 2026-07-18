@@ -4,6 +4,13 @@ import { type AuraEffectInput, auraEffectDescriptor } from '../src/ui/aura_effec
 const desc = (a: AuraEffectInput) => auraEffectDescriptor(a);
 
 describe('auraEffectDescriptor', () => {
+  it('describes the cancelable protective Hourglass aura', () => {
+    expect(desc({ id: 'temporal_hourglass', kind: 'stasis', value: 1.5 })).toEqual({
+      key: 'hudChrome.auraEffect.temporalHourglass',
+      nums: {},
+    });
+  });
+
   it('describes a damage-over-time with value, school and interval', () => {
     expect(desc({ kind: 'dot', value: 15, tickInterval: 3, school: 'shadow' })).toEqual({
       key: 'hudChrome.auraEffect.dot',
@@ -39,6 +46,13 @@ describe('auraEffectDescriptor', () => {
     });
   });
 
+  it('describes Fireball Form without calling it the Druid travel form', () => {
+    expect(desc({ kind: 'form_fireball', value: 1.4 })).toEqual({
+      key: 'hudChrome.auraEffect.formFireball',
+      nums: { pct: 40 },
+    });
+  });
+
   it('distinguishes attack-speed slow from haste by the multiplier', () => {
     expect(desc({ kind: 'attackspeed', value: 1.2 })?.key).toBe(
       'hudChrome.auraEffect.attackSpeedSlow',
@@ -67,16 +81,57 @@ describe('auraEffectDescriptor', () => {
     });
   });
 
-  it('shows flat total armor and stack count for a stacking sunder', () => {
-    // sunder value is a FLAT armor amount per stack (e.g. Sunder Armor: 25);
-    // total reduction = value * stacks (armor -= value * stacks in mitigation).
-    expect(desc({ kind: 'sunder', value: 25, stacks: 5 })).toEqual({
-      key: 'hudChrome.auraEffect.armorFlatStacks',
-      nums: { value: 125, stacks: 5 },
+  it('shows Sunder Armor as a percent reduction scaling with stacks', () => {
+    // Sunder is now a PERCENT debuff (2% per stack); the aura value carries the threat
+    // constant and is ignored for the tooltip. 5 stacks = 10%.
+    expect(desc({ kind: 'sunder', value: 170, stacks: 5 })).toEqual({
+      key: 'hudChrome.auraEffect.armorPctStacks',
+      nums: { pct: 10, stacks: 5 },
     });
-    expect(desc({ kind: 'sunder', value: 40, stacks: 1 })).toEqual({
+    expect(desc({ kind: 'sunder', value: 25, stacks: 1 })).toEqual({
+      key: 'hudChrome.auraEffect.armorPct',
+      nums: { pct: 2 },
+    });
+  });
+
+  it('shows Faerie Fire as a fixed percent armor reduction', () => {
+    expect(desc({ kind: 'faerie_fire', value: 0 })).toEqual({
+      key: 'hudChrome.auraEffect.armorPct',
+      nums: { pct: 10 },
+    });
+  });
+
+  it('shows mob corrosion as a flat, stacking armor shred', () => {
+    expect(desc({ kind: 'corrode', value: 30, stacks: 3 })).toEqual({
+      key: 'hudChrome.auraEffect.armorFlatStacks',
+      nums: { value: 90, stacks: 3 },
+    });
+    expect(desc({ kind: 'corrode', value: 6, stacks: 1 })).toEqual({
       key: 'hudChrome.auraEffect.armorFlat',
-      nums: { value: 40 },
+      nums: { value: 6 },
+    });
+  });
+
+  it('shows the percent raid buffs as +N% stat lines', () => {
+    expect(desc({ kind: 'buff_int_pct', value: 5 })).toEqual({
+      key: 'hudChrome.auraEffect.increasePct.int',
+      nums: { pct: 5 },
+    });
+    expect(desc({ kind: 'buff_ap_pct', value: 10 })).toEqual({
+      key: 'hudChrome.auraEffect.increasePct.ap',
+      nums: { pct: 10 },
+    });
+    expect(desc({ kind: 'buff_stats_pct', value: 5 })).toEqual({
+      key: 'hudChrome.auraEffect.increasePct.allStats',
+      nums: { pct: 5 },
+    });
+    expect(desc({ kind: 'buff_armor_pct', value: 10 })).toEqual({
+      key: 'hudChrome.auraEffect.increasePct.armor',
+      nums: { pct: 10 },
+    });
+    expect(desc({ kind: 'buff_sta_pct', value: 5 })).toEqual({
+      key: 'hudChrome.auraEffect.increasePct.sta',
+      nums: { pct: 5 },
     });
   });
 
@@ -102,6 +157,17 @@ describe('auraEffectDescriptor', () => {
     expect(desc({ kind: 'buff_dodge', value: -0.05 })).toEqual({
       key: 'hudChrome.auraEffect.dodgeReduce',
       nums: { pct: 5 },
+    });
+  });
+
+  it('describes the tank defensive cooldown auras', () => {
+    expect(desc({ kind: 'shield_wall', value: 0.4 })).toEqual({
+      key: 'hudChrome.auraEffect.damageReduction',
+      nums: { pct: 40 },
+    });
+    expect(desc({ kind: 'guardian_ward', value: 0.35 })).toEqual({
+      key: 'hudChrome.auraEffect.guardianWard',
+      nums: { pct: 35 },
     });
   });
 
@@ -135,5 +201,25 @@ describe('auraEffectDescriptor', () => {
   it('is a pure function: same input gives the same output', () => {
     const input: AuraEffectInput = { kind: 'dot', value: 12, tickInterval: 2, school: 'nature' };
     expect(desc(input)).toEqual(desc(input));
+  });
+
+  it('describes the damage-dealt fraction buff as a percent in both directions', () => {
+    // Rune of Power / Elemental Convergence: the bearer deals more damage.
+    expect(desc({ kind: 'buff_dmg_done', value: 0.1 })).toEqual({
+      key: 'hudChrome.auraEffect.dmgDone',
+      nums: { pct: 10 },
+    });
+    // Negative = a demoralize (Direhowl's pct form): the reduce wording.
+    expect(desc({ kind: 'buff_dmg_done', value: -0.2 })).toEqual({
+      key: 'hudChrome.auraEffect.dmgDoneReduce',
+      nums: { pct: 20 },
+    });
+  });
+
+  it('explains how Heating Up becomes Hot Streak', () => {
+    expect(desc({ id: 'heating_up', kind: 'internal_cd', value: 0 })).toEqual({
+      key: 'hudChrome.auraEffect.heatingUp',
+      nums: {},
+    });
   });
 });

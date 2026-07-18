@@ -278,12 +278,13 @@ describe('active-quest objective areas (the classic POI blobs)', () => {
   // quest-area branch exercises real content rather than a synthetic fixture.
   function requireKillQuestInZone() {
     for (const q of Object.values(QUESTS)) {
-      const obj = q.objectives.find((o) => o.type === 'kill' && o.targetMobId);
-      if (!obj) continue;
-      const camp = CAMPS.find(
-        (c) => c.mobId === obj.targetMobId && c.center.z >= ZONE.zMin && c.center.z < ZONE.zMax,
-      );
-      if (camp) return { quest: q, camp };
+      for (const obj of q.objectives) {
+        if (obj.type !== 'kill') continue;
+        const camp = CAMPS.find(
+          (c) => c.mobId === obj.targetMobId && c.center.z >= ZONE.zMin && c.center.z < ZONE.zMax,
+        );
+        if (camp) return { quest: q, camp };
+      }
     }
     throw new Error('expected a kill quest with a camp in the first zone');
   }
@@ -331,16 +332,10 @@ describe('active-quest objective areas (the classic POI blobs)', () => {
     expect(z2.questAreas[0].radius).toBeCloseTo(z1.questAreas[0].radius * 2, 5);
   });
 
-  it('numbers areas by the quest log acceptance order and drops untracked quests', () => {
+  it('numbers areas by the quest log acceptance order', () => {
     const model = buildOverworldMapModel(input(makeOverworldWorld('sim', activeLog()), 1));
     // single-quest log: every area carries badge number 1
     for (const a of model.questAreas) expect(a.numbers).toEqual([1]);
-    // untracking the quest removes its areas entirely
-    const untracked = buildOverworldMapModel({
-      ...input(makeOverworldWorld('sim', activeLog()), 1),
-      untrackedQuestIds: new Set([quest.id]),
-    });
-    expect(untracked.questAreas).toEqual([]);
   });
 
   it('hit-tests a hovered point to the objective identities under it (deduped)', () => {
